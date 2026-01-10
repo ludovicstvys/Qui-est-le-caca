@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // change to "sqlite" if you use SQLite
+  url      = env("DATABASE_URL")
+}
+
+model Friend {
+  id        String   @id @default(cuid())
+  riotName  String   // gameName
+  riotTag   String   // tagLine (ex: EUW)
+  puuid     String?  @unique
+  region    String   @default("euw1")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matches   FriendMatch[]
+}
+
+model Match {
+  id            String   @id // matchId
+  platform      String?
+  gameStartMs   BigInt?
+  gameDurationS Int?
+  queueId       Int?
+  rawJson       Json
+  fetchedAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  friends       FriendMatch[]
+}
+
+model FriendMatch {
+  friendId String
+  matchId  String
+  addedAt  DateTime @default(now())
+
+  friend   Friend @relation(fields: [friendId], references: [id], onDelete: Cascade)
+  match    Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@id([friendId, matchId])
+  @@index([matchId])
+}

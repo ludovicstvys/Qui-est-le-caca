@@ -1,0 +1,26 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+
+export const runtime = "nodejs";
+
+export async function GET() {
+  const friends = await prisma.friend.findMany({ orderBy: { createdAt: "desc" } });
+  return NextResponse.json(friends);
+}
+
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const riotName = String(body.riotName || "").trim();
+  const riotTag = String(body.riotTag || "").trim();
+  const region = String(body.region || "euw1").trim();
+
+  if (!riotName || !riotTag) {
+    return NextResponse.json({ error: "riotName and riotTag required" }, { status: 400 });
+  }
+
+  const friend = await prisma.friend.create({
+    data: { riotName, riotTag, region },
+  });
+
+  return NextResponse.json(friend, { status: 201 });
+}
