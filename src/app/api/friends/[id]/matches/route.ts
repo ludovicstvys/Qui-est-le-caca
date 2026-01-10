@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
+  const prisma = getPrisma();
+
   const rows = await prisma.friendMatch.findMany({
     where: { friendId: params.id },
     include: { match: true },

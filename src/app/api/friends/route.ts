@@ -1,14 +1,17 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
 export async function GET() {
+  const prisma = getPrisma();
   const friends = await prisma.friend.findMany({ orderBy: { createdAt: "desc" } });
   return NextResponse.json(friends);
 }
 
 export async function POST(req: Request) {
+  const prisma = getPrisma();
+
   const body = await req.json().catch(() => ({}));
   const riotName = String(body.riotName || "").trim();
   const riotTag = String(body.riotTag || "").trim();

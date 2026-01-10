@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { getPrisma } from "@/lib/prisma";
 import { getAccountByRiotId, getMatchById, getMatchIdsByPuuid } from "@/lib/riot";
 
 const DEFAULT_FRESHNESS_MINUTES = 30;
@@ -14,6 +14,8 @@ function isFresh(date: Date) {
 }
 
 export async function ensureFriendPuuid(friendId: string) {
+  const prisma = getPrisma();
+
   const friend = await prisma.friend.findUnique({ where: { id: friendId } });
   if (!friend) throw new Error("Friend not found");
 
@@ -29,17 +31,17 @@ export async function ensureFriendPuuid(friendId: string) {
 }
 
 export async function syncFriendMatches(friendId: string, count = 10) {
+  const prisma = getPrisma();
+
   const puuid = await ensureFriendPuuid(friendId);
 
   const matchIds = await getMatchIdsByPuuid(puuid, count);
 
-  // Link friend <-> match ids
   await prisma.friendMatch.createMany({
     data: matchIds.map((matchId) => ({ friendId, matchId })),
     skipDuplicates: true,
   });
 
-  // Fetch match details and store raw JSON
   for (const matchId of matchIds) {
     const existing = await prisma.match.findUnique({ where: { id: matchId } });
     if (existing && isFresh(existing.fetchedAt)) continue;

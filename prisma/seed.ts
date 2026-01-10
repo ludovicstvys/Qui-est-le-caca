@@ -9,15 +9,18 @@ async function main() {
     // { riotName: "YourFriend", riotTag: "EUW", region: "euw1" },
   ];
 
-  for (const f of friends) {
-    await prisma.friend.create({
-      data: {
-        riotName: f.riotName,
-        riotTag: f.riotTag,
-        region: f.region ?? "euw1",
-      },
-    });
+  if (friends.length === 0) {
+    console.log("No seed data provided. Edit prisma/seed.ts to add friends.");
+    return;
   }
+
+  await prisma.friend.createMany({
+    data: friends.map((f) => ({
+      riotName: f.riotName,
+      riotTag: f.riotTag,
+      region: f.region ?? "euw1",
+    })),
+  });
 
   console.log("Seed complete.");
 }
