@@ -2,20 +2,20 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+type SeedFriend = { riotName: string; riotTag: string; region?: string };
+
 async function main() {
-  // Example seed data. Edit this list to your friends.
-  const friends = [
-    // { riotName: "YourFriend", riotTag: "EUW" },
+  const friends: SeedFriend[] = [
+    // { riotName: "YourFriend", riotTag: "EUW", region: "euw1" },
   ];
 
   for (const f of friends) {
-    await prisma.friend.upsert({
-      where: { puuid: null as any }, // trick: we don't have unique on riotName+riotTag
-      create: { riotName: f.riotName, riotTag: f.riotTag, region: "euw1" },
-      update: {},
-    }).catch(async () => {
-      // Fallback: create if upsert trick fails (keeps seed simple)
-      await prisma.friend.create({ data: { riotName: f.riotName, riotTag: f.riotTag, region: "euw1" } });
+    await prisma.friend.create({
+      data: {
+        riotName: f.riotName,
+        riotTag: f.riotTag,
+        region: f.region ?? "euw1",
+      },
     });
   }
 
