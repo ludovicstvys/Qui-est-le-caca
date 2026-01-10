@@ -37,11 +37,24 @@ export async function syncFriendMatches(friendId: string, count = 10) {
 
   const matchIds = await getMatchIdsByPuuid(puuid, count);
 
+  // 1) IMPORTANT : créer des lignes Match "placeholder" pour satisfaire la FK
+  // rawJson est required => on met {} au début (sera remplacé ensuite)
+  await prisma.match.createMany({
+    data: matchIds.map((id) => ({
+      id,
+      rawJson: {}, // placeholder JSON
+      // le reste peut être null (platform/gameStartMs/etc)
+    })),
+    skipDuplicates: true,
+  });
+
+  // 2) Ensuite seulement, créer les liens Friend <-> Match
   await prisma.friendMatch.createMany({
     data: matchIds.map((matchId) => ({ friendId, matchId })),
     skipDuplicates: true,
   });
 
+  // 3) Puis fetch les détails et update/upsert
   for (const matchId of matchIds) {
     const existing = await prisma.match.findUnique({ where: { id: matchId } });
     if (existing && isFresh(existing.fetchedAt)) continue;
@@ -56,17 +69,9 @@ export async function syncFriendMatches(friendId: string, count = 10) {
     const queueId = typeof info?.queueId === "number" ? info.queueId : null;
     const platform = typeof info?.platformId === "string" ? info.platformId : null;
 
-    await prisma.match.upsert({
+    await prisma.match.update({
       where: { id: matchId },
-      create: {
-        id: matchId,
-        rawJson: raw,
-        platform,
-        gameStartMs,
-        gameDurationS,
-        queueId,
-      },
-      update: {
+      data: {
         rawJson: raw,
         platform,
         gameStartMs,
@@ -79,3 +84,4 @@ export async function syncFriendMatches(friendId: string, count = 10) {
 
   return { puuid, matchIds };
 }
+
