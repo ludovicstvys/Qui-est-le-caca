@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { syncFriendMatches } from "@/lib/sync";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 export async function POST(_req: Request, { params }: { params: { id: string } }) {
   try {

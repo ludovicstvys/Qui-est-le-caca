@@ -76,3 +76,12 @@ Ouvre: http://localhost:3000
 - Normaliser un "summary" (KDA, champ, win/lose) au lieu de stocker `rawJson`
 - Ajouter Redis pour cache + limiter les appels Riot
 - Ajouter un cron (sync automatique)
+
+
+## Mise à jour DB (sans npm / sans Prisma migrate)
+Si tu gères ta DB uniquement via Supabase, tu peux appliquer les changements via **SQL Editor**.
+
+### Ajouter la colonne avatar
+```sql
+alter table "Friend" add column if not exists "avatarUrl" text;
+```

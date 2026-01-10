@@ -34,27 +34,21 @@ export async function syncFriendMatches(friendId: string, count = 10) {
   const prisma = getPrisma();
 
   const puuid = await ensureFriendPuuid(friendId);
-
   const matchIds = await getMatchIdsByPuuid(puuid, count);
 
-  // 1) IMPORTANT : créer des lignes Match "placeholder" pour satisfaire la FK
-  // rawJson est required => on met {} au début (sera remplacé ensuite)
+  // 1) FK requires Match rows to exist before FriendMatch rows.
   await prisma.match.createMany({
-    data: matchIds.map((id) => ({
-      id,
-      rawJson: {}, // placeholder JSON
-      // le reste peut être null (platform/gameStartMs/etc)
-    })),
+    data: matchIds.map((id) => ({ id, rawJson: {} })),
     skipDuplicates: true,
   });
 
-  // 2) Ensuite seulement, créer les liens Friend <-> Match
+  // 2) Link Friend <-> Match
   await prisma.friendMatch.createMany({
     data: matchIds.map((matchId) => ({ friendId, matchId })),
     skipDuplicates: true,
   });
 
-  // 3) Puis fetch les détails et update/upsert
+  // 3) Fetch details and update
   for (const matchId of matchIds) {
     const existing = await prisma.match.findUnique({ where: { id: matchId } });
     if (existing && isFresh(existing.fetchedAt)) continue;
@@ -84,4 +78,3 @@ export async function syncFriendMatches(friendId: string, count = 10) {
 
   return { puuid, matchIds };
 }
-

@@ -13,6 +13,7 @@ model Friend {
   riotTag   String   // tagLine (ex: EUW)
   puuid     String?  @unique
   region    String   @default("euw1")
+  avatarUrl String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
