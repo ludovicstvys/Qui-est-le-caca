@@ -32,6 +32,8 @@ region    String   @default("euw1")
   avatarUrl String?
   lastMatchId String?
   lastSyncAt  DateTime?
+  rankSnapshots RankSnapshot[]
+
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
