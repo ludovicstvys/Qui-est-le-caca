@@ -4,8 +4,11 @@ import { getPrisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, { params }: { params: { id: string } }) {
+export async function GET(req: Request, { params }: { params: { id: string } }) {
   const prisma = getPrisma();
+
+  const url = new URL(req.url);
+  const includeTimeline = url.searchParams.get("includeTimeline") === "1";
 
   const rows = await prisma.friendMatch.findMany({
     where: { friendId: params.id },
@@ -22,6 +25,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
       gameDurationS: r.match.gameDurationS,
       queueId: r.match.queueId,
       raw: r.match.rawJson,
+      timeline: includeTimeline ? r.match.timelineJson : undefined,
     }));
 
   return NextResponse.json(payload);

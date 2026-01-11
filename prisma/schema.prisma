@@ -27,6 +27,8 @@ model Match {
   gameDurationS Int?
   queueId       Int?
   rawJson       Json
+  timelineJson Json?
+  timelineFetchedAt DateTime?
   fetchedAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

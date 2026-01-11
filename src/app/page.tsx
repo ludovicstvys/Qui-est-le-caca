@@ -13,8 +13,8 @@ type Friend = {
 
 function initials(name: string) {
   const parts = name.split(/\s+/).filter(Boolean);
-  const a = (parts[0]?.[0] ?? "L").toUpperCase();
-  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "F").toUpperCase();
+  const a = (parts[0]?.[0] ?? "M").toUpperCase();
+  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "D").toUpperCase();
   return a + b;
 }
 
@@ -33,8 +33,9 @@ export default function HomePage() {
 
   async function loadFriends() {
     const res = await fetch("/api/friends", { cache: "no-store" });
-    if (!res.ok) throw new Error("Failed to load friends");
-    setFriends(await res.json());
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error ?? "Failed to load friends");
+    setFriends(json);
   }
 
   useEffect(() => {
@@ -67,19 +68,17 @@ export default function HomePage() {
     setRiotTag("");
     setAvatarUrl(null);
     await loadFriends();
-    setToast({ type: "ok", msg: "Ami ajouté ✨" });
+    setToast({ type: "ok", msg: "Monkey ajouté ✨" });
     setBusy(false);
   }
 
-  async function sync(friendId: string) {
+  async function syncAll() {
     setBusy(true);
     setToast(null);
-
-    const res = await fetch(`/api/friends/${friendId}/sync`, { method: "POST" });
+    const res = await fetch(`/api/sync?count=10`, { method: "POST" });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.ok) setToast({ type: "err", msg: json.error ?? "Erreur sync" });
-    else setToast({ type: "ok", msg: "Sync OK (10 matchs) ✅" });
-
+    if (!res.ok || !json.ok) setToast({ type: "err", msg: json.error ?? "Erreur sync global" });
+    else setToast({ type: "ok", msg: `Sync global OK ✅ (${json.okCount}/${json.total})` });
     setBusy(false);
   }
 
@@ -103,27 +102,29 @@ export default function HomePage() {
       <header className="topbar">
         <div className="brand">
           <div className="avatar" aria-hidden>
-            <span>LF</span>
+            <span>MD</span>
           </div>
           <div>
-            <h1 className="h1">LoL Friends</h1>
-            <p className="p">Dashboard dark pour suivre les games de tes potes (Riot API + SQL).</p>
+            <h1 className="h1">Monkeys dashboard</h1>
+            <p className="p">Stats LoL (dark) pour tes potes — Riot API + SQL + cache.</p>
           </div>
         </div>
-        <span className="badge">Next.js · Prisma · PostgreSQL</span>
+
+        <div className="row">
+          <button className="button buttonPrimary" onClick={syncAll} disabled={busy || friends.length === 0}>
+            {busy ? "…" : "Sync tout"}
+          </button>
+          <span className="badge">Next.js · Prisma · PostgreSQL</span>
+        </div>
       </header>
 
       <div style={{ marginTop: 14 }} className="grid cols2">
         <section className="card">
-          <h2 className="cardTitle">Ajouter un pote</h2>
+          <h2 className="cardTitle">Ajouter un monkey</h2>
 
           <div className="row">
             <div className="avatar" title="Aperçu avatar">
-              {avatarUrl ? (
-                <img src={avatarUrl} alt="Avatar" />
-              ) : (
-                <span>{initials(riotName || "LoL Friend")}</span>
-              )}
+              {avatarUrl ? <img src={avatarUrl} alt="Avatar" /> : <span>{initials(riotName || "Monkey")}</span>}
             </div>
 
             <div className="spacer" />
@@ -150,7 +151,7 @@ export default function HomePage() {
           <div className="row">
             <input
               className="input"
-              placeholder="gameName (ex: MyFriend)"
+              placeholder="gameName (ex: MyMonkey)"
               value={riotName}
               onChange={(e) => setRiotName(e.target.value)}
             />
@@ -166,7 +167,7 @@ export default function HomePage() {
             <button className="button buttonPrimary" disabled={!canSubmit || busy} onClick={addFriend}>
               {busy ? "…" : "Ajouter"}
             </button>
-            <span className="small">Le sync va récupérer/stocker 10 matchs par défaut.</span>
+            <span className="small">Le sync global récupère / met à jour les 10 derniers matchs de tout le monde.</span>
           </div>
 
           {toast && (
@@ -185,26 +186,21 @@ export default function HomePage() {
           )}
 
           <p className="small" style={{ marginTop: 10 }}>
-            Tip : tu peux rester en privé avec une clé Riot dev (24h), ou demander une clé “personal” pour être plus
-            stable.
+            Quota Riot : si tu touches les limites, le serveur attend automatiquement (Retry-After + backoff).
           </p>
         </section>
 
         <section className="card">
-          <h2 className="cardTitle">Potes</h2>
+          <h2 className="cardTitle">Monkeys</h2>
 
           {friends.length === 0 ? (
-            <p className="small">Aucun pote pour l’instant. Ajoute-en un à gauche 👈</p>
+            <p className="small">Aucun monkey pour l’instant. Ajoute-en un à gauche 👈</p>
           ) : (
             <div className="grid" style={{ marginTop: 8 }}>
               {friends.map((f) => (
                 <div key={f.id} className="friendCard">
                   <div className="avatar">
-                    {f.avatarUrl ? (
-                      <img src={f.avatarUrl} alt={`${f.riotName} avatar`} />
-                    ) : (
-                      <span>{initials(f.riotName)}</span>
-                    )}
+                    {f.avatarUrl ? <img src={f.avatarUrl} alt={`${f.riotName} avatar`} /> : <span>{initials(f.riotName)}</span>}
                   </div>
 
                   <div>
@@ -214,10 +210,7 @@ export default function HomePage() {
 
                   <div className="spacer" />
 
-                  <button className="button" onClick={() => sync(f.id)} disabled={busy}>
-                    Sync 10 matchs
-                  </button>
-                  <a className="button" href={`/friend/${f.id}`}>Voir</a>
+                  <a className="button" href={`/friend/${f.id}`}>Voir stats</a>
                 </div>
               ))}
             </div>

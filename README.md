@@ -1,4 +1,4 @@
-# LoL Friends (Next.js + Prisma + SQL + Riot API)
+# Monkeys dashboard (Next.js + Prisma + SQL + Riot API)
 
 Petit dashboard pour afficher/stocker les matchs League of Legends de tes potes.
 
@@ -85,3 +85,31 @@ Si tu gères ta DB uniquement via Supabase, tu peux appliquer les changements vi
 ```sql
 alter table "Friend" add column if not exists "avatarUrl" text;
 ```
+
+
+## Match data vide ({})
+Si tu vois `rawJson = {}` dans la table `Match`, c’est que des "placeholders" ont été créés pour satisfaire la FK,
+mais les détails n’ont pas encore été récupérés. Dans cette version, les placeholders sont marqués comme "stale"
+(`fetchedAt = 1970-01-01`), donc un nouveau **Sync** remplit automatiquement les données.
+
+## Timeline (toutes les données possibles)
+Pour récupérer aussi la timeline (`/timeline`), tu peux activer:
+- `FETCH_TIMELINE="1"` (env var)
+
+⚠️ La timeline est volumineuse et peut consommer du quota API.
+
+### Mise à jour DB (Supabase SQL Editor)
+Ajoute les colonnes (si tu n’utilises pas Prisma migrate) :
+```sql
+alter table "Match" add column if not exists "timelineJson" jsonb;
+alter table "Match" add column if not exists "timelineFetchedAt" timestamptz;
+```
+
+
+## Anti-quota Riot (délai + retry)
+Tu peux ajuster le lissage des requêtes :
+- `RIOT_MIN_DELAY_MS="120"` (délai minimum entre 2 requêtes Riot dans une même exécution)
+Le code gère aussi automatiquement les 429 (Retry-After + backoff).
+
+Option timeline :
+- `FETCH_TIMELINE="1"`

@@ -21,8 +21,8 @@ type ApiMatch = {
 
 function initials(name: string) {
   const parts = name.split(/\s+/).filter(Boolean);
-  const a = (parts[0]?.[0] ?? "L").toUpperCase();
-  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "F").toUpperCase();
+  const a = (parts[0]?.[0] ?? "M").toUpperCase();
+  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "D").toUpperCase();
   return a + b;
 }
 
@@ -31,6 +31,13 @@ function fmtDuration(s?: number | null) {
   const m = Math.floor(s / 60);
   const r = Math.floor(s % 60);
   return `${m}m ${r.toString().padStart(2, "0")}s`;
+}
+
+function displayName(p: any) {
+  const gn = p?.riotIdGameName;
+  const tl = p?.riotIdTagline;
+  if (gn && tl) return `${gn}#${tl}`;
+  return p?.summonerName ?? "Unknown";
 }
 
 export default function FriendPage({ params }: { params: { id: string } }) {
@@ -46,11 +53,11 @@ export default function FriendPage({ params }: { params: { id: string } }) {
       fetch(`/api/friends/${params.id}`, { cache: "no-store" }),
       fetch(`/api/friends/${params.id}/matches`, { cache: "no-store" }),
     ]);
-    if (!fRes.ok) throw new Error("Impossible de charger le profil.");
-    const fJson = await fRes.json();
-    const mJson = await mRes.json();
+    const fJson = await fRes.json().catch(() => ({}));
+    const mJson = await mRes.json().catch(() => ({}));
+    if (!fRes.ok) throw new Error(fJson.error ?? "Impossible de charger le profil.");
     setFriend(fJson);
-    setMatches(mJson);
+    setMatches(Array.isArray(mJson) ? mJson : []);
     setLoading(false);
   }
 
@@ -61,13 +68,14 @@ export default function FriendPage({ params }: { params: { id: string } }) {
     });
   }, [params.id]);
 
-  async function syncNow() {
+  async function syncAll() {
+    // Global sync, then refresh this profile
     setBusy(true);
     setToast(null);
-    const res = await fetch(`/api/friends/${params.id}/sync`, { method: "POST" });
+    const res = await fetch(`/api/sync?count=10`, { method: "POST" });
     const json = await res.json().catch(() => ({}));
     if (!res.ok || !json.ok) setToast({ type: "err", msg: json.error ?? "Erreur sync" });
-    else setToast({ type: "ok", msg: "Sync OK ✅" });
+    else setToast({ type: "ok", msg: `Sync global OK ✅ (${json.okCount}/${json.total})` });
     await loadAll().catch(() => {});
     setBusy(false);
   }
@@ -101,30 +109,57 @@ export default function FriendPage({ params }: { params: { id: string } }) {
         const info = m.raw?.info;
         const parts = info?.participants;
         if (!Array.isArray(parts)) return null;
-        const p = parts.find((x: any) => x?.puuid === friend.puuid);
-        if (!p) return null;
+
+        const me = parts.find((x: any) => x?.puuid === friend.puuid);
+        if (!me) return null;
+
+        const teamId = me.teamId;
+        const allies = parts.filter((p: any) => p?.teamId === teamId);
+        const enemies = parts.filter((p: any) => p?.teamId !== teamId);
 
         const date = info?.gameStartTimestamp
           ? new Date(info.gameStartTimestamp).toLocaleString()
           : (m.gameStartMs ? new Date(Number(m.gameStartMs)).toLocaleString() : "n/a");
 
         const duration = typeof info?.gameDuration === "number" ? info.gameDuration : m.gameDurationS;
-        const cs = (p.totalMinionsKilled ?? 0) + (p.neutralMinionsKilled ?? 0);
+        const cs = (me.totalMinionsKilled ?? 0) + (me.neutralMinionsKilled ?? 0);
+
+        const teamKills = (arr: any[]) => arr.reduce((s, p) => s + (p.kills ?? 0), 0);
+        const teamDeaths = (arr: any[]) => arr.reduce((s, p) => s + (p.deaths ?? 0), 0);
+        const allyKills = teamKills(allies);
+        const enemyKills = teamKills(enemies);
 
         return {
           matchId: m.matchId,
           date,
           duration,
-          win: !!p.win,
-          champ: p.championName ?? "Unknown",
-          lane: p.lane ?? "—",
-          role: p.role ?? "—",
-          k: p.kills ?? 0,
-          d: p.deaths ?? 0,
-          a: p.assists ?? 0,
+          queueId: info?.queueId ?? m.queueId ?? null,
+          win: !!me.win,
+          champ: me.championName ?? "Unknown",
+          lane: me.lane ?? "—",
+          role: me.role ?? "—",
+          k: me.kills ?? 0,
+          d: me.deaths ?? 0,
+          a: me.assists ?? 0,
           cs,
-          vision: p.visionScore ?? null,
-          dmg: p.totalDamageDealtToChampions ?? null,
+          vision: me.visionScore ?? null,
+          dmg: me.totalDamageDealtToChampions ?? null,
+          allyKills,
+          enemyKills,
+          allies: allies.map((p: any) => ({
+            name: displayName(p),
+            champ: p.championName ?? "—",
+            k: p.kills ?? 0,
+            d: p.deaths ?? 0,
+            a: p.assists ?? 0,
+          })),
+          enemies: enemies.map((p: any) => ({
+            name: displayName(p),
+            champ: p.championName ?? "—",
+            k: p.kills ?? 0,
+            d: p.deaths ?? 0,
+            a: p.assists ?? 0,
+          })),
         };
       })
       .filter(Boolean) as any[];
@@ -149,7 +184,7 @@ export default function FriendPage({ params }: { params: { id: string } }) {
           <a className="button" href="/">←</a>
 
           <div className="avatar">
-            {friend?.avatarUrl ? <img src={friend.avatarUrl} alt="Avatar" /> : <span>{initials(friend?.riotName ?? "LoL")}</span>}
+            {friend?.avatarUrl ? <img src={friend.avatarUrl} alt="Avatar" /> : <span>{initials(friend?.riotName ?? "Monkey")}</span>}
           </div>
 
           <div>
@@ -157,7 +192,7 @@ export default function FriendPage({ params }: { params: { id: string } }) {
               <span>{friend ? `${friend.riotName}#${friend.riotTag}` : "Profil"}</span>
               {friend?.puuid ? <span className="badge">PUUID OK</span> : <span className="badge">PUUID en attente</span>}
             </h1>
-            <p className="p">Stats rapides + derniers matchs stockés en base.</p>
+            <p className="p">Résumé + détails des games (alliés / ennemis, KDA, etc.).</p>
           </div>
         </div>
 
@@ -166,8 +201,8 @@ export default function FriendPage({ params }: { params: { id: string } }) {
             <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => updateAvatar(e.target.files?.[0] ?? null)} />
             Changer avatar
           </label>
-          <button className="button buttonPrimary" onClick={syncNow} disabled={busy}>
-            {busy ? "…" : "Sync"}
+          <button className="button buttonPrimary" onClick={syncAll} disabled={busy}>
+            {busy ? "…" : "Sync tout"}
           </button>
         </div>
       </header>
@@ -189,11 +224,11 @@ export default function FriendPage({ params }: { params: { id: string } }) {
 
       <div style={{ marginTop: 14 }} className="grid">
         <section className="card">
-          <h2 className="cardTitle">Résumé (10 derniers matchs)</h2>
+          <h2 className="cardTitle">Résumé (10 derniers matchs en DB)</h2>
 
           {!friend?.puuid ? (
             <p className="small">
-              Clique <b>Sync</b> pour résoudre le compte (PUUID) et récupérer les matchs.
+              Clique <b>Sync tout</b> pour résoudre le compte (PUUID) et récupérer les matchs.
             </p>
           ) : derived.kpis ? (
             <div className="kpiGrid">
@@ -216,12 +251,12 @@ export default function FriendPage({ params }: { params: { id: string } }) {
         </section>
 
         <section className="card">
-          <h2 className="cardTitle">Derniers matchs</h2>
+          <h2 className="cardTitle">Games — équipes & KDA</h2>
 
           {loading ? (
             <p className="small">Chargement…</p>
           ) : derived.rows.length === 0 ? (
-            <p className="small">Aucun match stocké. Lance un sync.</p>
+            <p className="small">Aucune game stockée. Lance un sync.</p>
           ) : (
             <div className="grid" style={{ marginTop: 8 }}>
               {derived.rows.map((r: any) => (
@@ -231,15 +266,47 @@ export default function FriendPage({ params }: { params: { id: string } }) {
                     <div className="pill">{r.champ}</div>
                     <div className="pill">{fmtDuration(r.duration)}</div>
                     <div className="pill">{r.date}</div>
+                    <div className="pill">Kills: <b style={{ marginLeft: 6 }}>{r.allyKills}-{r.enemyKills}</b></div>
                   </div>
 
                   <div className="row" style={{ gap: 10 }}>
-                    <span className="pill">KDA: <b style={{ marginLeft: 6 }}>{r.k}/{r.d}/{r.a}</b></span>
+                    <span className="pill">Ton KDA: <b style={{ marginLeft: 6 }}>{r.k}/{r.d}/{r.a}</b></span>
                     <span className="pill">CS: <b style={{ marginLeft: 6 }}>{r.cs}</b></span>
                     {r.vision != null && <span className="pill">Vision: <b style={{ marginLeft: 6 }}>{r.vision}</b></span>}
                     {r.dmg != null && <span className="pill">DMG: <b style={{ marginLeft: 6 }}>{r.dmg}</b></span>}
                     <span className="pill">{r.lane}{r.role && r.role !== "—" ? ` · ${r.role}` : ""}</span>
                   </div>
+
+                  <div className="hr" />
+
+                  <div className="grid" style={{ gap: 10 }}>
+                    <div>
+                      <div className="small" style={{ marginBottom: 6, opacity: 0.9 }}>Alliés</div>
+                      <div className="grid" style={{ gap: 8 }}>
+                        {r.allies.map((p: any, idx: number) => (
+                          <div key={idx} className="row" style={{ justifyContent: "space-between" }}>
+                            <span className="pill">{p.champ}</span>
+                            <span className="small" style={{ flex: 1, marginLeft: 10 }}>{p.name}</span>
+                            <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k}/{p.d}/{p.a}</b></span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="small" style={{ marginBottom: 6, opacity: 0.9 }}>Ennemis</div>
+                      <div className="grid" style={{ gap: 8 }}>
+                        {r.enemies.map((p: any, idx: number) => (
+                          <div key={idx} className="row" style={{ justifyContent: "space-between" }}>
+                            <span className="pill">{p.champ}</span>
+                            <span className="small" style={{ flex: 1, marginLeft: 10 }}>{p.name}</span>
+                            <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k}/{p.d}/{p.a}</b></span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
                 </div>
               ))}
             </div>
@@ -248,7 +315,7 @@ export default function FriendPage({ params }: { params: { id: string } }) {
       </div>
 
       <p className="small" style={{ marginTop: 14 }}>
-        Note : l’avatar est stocké en DB en Data URL (compressé) pour rester simple.
+        Anti-quota : on lisse les appels (délai minimum) et en cas de 429 on attend automatiquement (Retry-After).
       </p>
     </main>
   );
