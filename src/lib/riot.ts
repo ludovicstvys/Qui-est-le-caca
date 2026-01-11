@@ -1,3 +1,5 @@
+import { createHash } from "crypto";
+
 const RIOT_API_KEY = process.env.RIOT_API_KEY!;
 const RIOT_REGION = (process.env.RIOT_REGION || "euw1").toLowerCase();      // platform routing: euw1
 const RIOT_ROUTING = (process.env.RIOT_ROUTING || "europe").toLowerCase();  // regional routing: europe
@@ -38,6 +40,16 @@ function debugLog(ctx: RiotDebugCtx | undefined, msg: string, extra?: Record<str
 
 function assertEnv() {
   if (!RIOT_API_KEY) throw new Error("Missing RIOT_API_KEY");
+}
+
+let didLogTokenInfo = false;
+
+function tokenFingerprint() {
+  try {
+    return createHash("sha256").update(String(RIOT_API_KEY)).digest("hex").slice(0, 10);
+  } catch {
+    return "unknown";
+  }
 }
 
 // Soft throttling to smooth bursts (helps with quota).
@@ -85,6 +97,14 @@ async function riotFetch<T>(url: string, attempt = 0, ctx?: RiotDebugCtx): Promi
     assertEnv();
     await throttle();
 
+    // Helpful when debugging Vercel env issues: confirms which key is currently loaded
+    // without leaking the key itself.
+    if (DEBUG_RIOT && !didLogTokenInfo) {
+      didLogTokenInfo = true;
+      // eslint-disable-next-line no-console
+      console.log(`[DEBUG_RIOT] tokenFingerprint=${tokenFingerprint()} tokenLen=${String(RIOT_API_KEY).length} region=${RIOT_REGION} routing=${RIOT_ROUTING}`);
+    }
+
     const safeUrl = sanitizeUrl(url);
     debugLog(ctx, `-> ${safeUrl}`);
 
@@ -124,6 +144,13 @@ async function riotFetch<T>(url: string, attempt = 0, ctx?: RiotDebugCtx): Promi
     // keep the error readable in logs
     const snippet = (text || "").slice(0, 400);
     debugLog(ctx, `error ${res.status} ${res.statusText}`, { body: snippet });
+
+    if (res.status === 403) {
+      throw new Error(
+        `Riot API error 403 Forbidden - ${snippet} (check RIOT_API_KEY: expired / wrong key / missing env on this deployment)`
+      );
+    }
+
     throw new Error(`Riot API error ${res.status} ${res.statusText} - ${snippet}`);
   }
 
@@ -197,4 +224,10 @@ export async function getLeagueEntriesBySummonerId(encryptedSummonerId: string, 
     encryptedSummonerId
   )}`;
   return riotFetch<any[]>(url, 0, ctx);
+}
+
+// Status-v4 (platform routing): cheap health-check endpoint
+export async function getPlatformStatus(ctx?: RiotDebugCtx) {
+  const url = `https://${RIOT_REGION}.api.riotgames.com/lol/status/v4/platform-data`;
+  return riotFetch<any>(url, 0, ctx);
 }
