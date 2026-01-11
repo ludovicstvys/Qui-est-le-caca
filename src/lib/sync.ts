@@ -1,7 +1,7 @@
 import { getPrisma } from "@/lib/prisma";
 import {
   getAccountByRiotId,
-  getLeagueEntriesBySummonerId,
+  getLeagueEntriesByPuuid,
   getMatchById,
   getMatchIdsByPuuid,
   getMatchTimelineById,
@@ -174,8 +174,11 @@ export async function syncFriendRank(friendId: string) {
     return { skipped: true };
   }
 
-  const summonerId = await ensureFriendSummonerId(friendId);
-  const entries = await getLeagueEntriesBySummonerId(summonerId, { friendId, label: "league/entries/by-summoner" });
+  const puuid = await ensureFriendPuuid(friendId);
+
+  // Riot is migrating away from summonerId-based endpoints; /entries/by-summoner can return 403.
+  // Use the PUUID variant to be future-proof.
+  const entries = await getLeagueEntriesByPuuid(puuid, { friendId, label: "league/entries/by-puuid" });
 
   if (
     (() => {
@@ -186,7 +189,7 @@ export async function syncFriendRank(friendId: string) {
     entries.length === 0
   ) {
     // eslint-disable-next-line no-console
-    console.log(`[DEBUG_RIOT] friendId=${friendId} label=league/entries/by-summoner empty []`, { summonerId });
+    console.log(`[DEBUG_RIOT] friendId=${friendId} label=league/entries/by-puuid empty []`, { puuid });
   }
 
   const solo = Array.isArray(entries) ? entries.find((e: any) => e?.queueType === "RANKED_SOLO_5x5") : null;

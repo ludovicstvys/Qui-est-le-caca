@@ -198,3 +198,13 @@ export async function getLeagueEntriesBySummonerId(encryptedSummonerId: string, 
   )}`;
   return riotFetch<any[]>(url, 0, ctx);
 }
+
+// League-v4 (platform routing): current season ranked entries by PUUID
+// Note: Riot is in the process of migrating away from summonerId/accountId-based endpoints.
+// If /entries/by-summoner starts returning 403 for valid tokens, prefer this PUUID variant.
+export async function getLeagueEntriesByPuuid(encryptedPuuid: string, ctx?: RiotDebugCtx) {
+  const url = `https://${RIOT_REGION}.api.riotgames.com/lol/league/v4/entries/by-puuid/${encodeURIComponent(
+    encryptedPuuid
+  )}`;
+  return riotFetch<any[]>(url, 0, ctx);
+}
