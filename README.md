@@ -113,3 +113,27 @@ Le code gère aussi automatiquement les 429 (Retry-After + backoff).
 
 Option timeline :
 - `FETCH_TIMELINE="1"`
+
+
+## Rank + LP + Winrate ranked (sans npm)
+Si tu gères ta DB via Supabase SQL Editor, ajoute les colonnes Friend suivantes :
+
+```sql
+alter table "Friend" add column if not exists "summonerId" text;
+
+alter table "Friend" add column if not exists "rankedSoloTier" text;
+alter table "Friend" add column if not exists "rankedSoloRank" text;
+alter table "Friend" add column if not exists "rankedSoloLP" int4;
+alter table "Friend" add column if not exists "rankedSoloWins" int4;
+alter table "Friend" add column if not exists "rankedSoloLosses" int4;
+
+alter table "Friend" add column if not exists "rankedFlexTier" text;
+alter table "Friend" add column if not exists "rankedFlexRank" text;
+alter table "Friend" add column if not exists "rankedFlexLP" int4;
+alter table "Friend" add column if not exists "rankedFlexWins" int4;
+alter table "Friend" add column if not exists "rankedFlexLosses" int4;
+
+alter table "Friend" add column if not exists "rankFetchedAt" timestamptz;
+```
+
+> Le winrate est calculé à partir de `wins/losses` renvoyés par League-v4 (saison ranked en cours).

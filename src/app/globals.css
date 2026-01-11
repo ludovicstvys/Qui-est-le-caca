@@ -90,3 +90,6 @@ code{color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);padding:.1rem .
 }
 .pill.win{border-color:rgba(52,211,153,.35);background:rgba(52,211,153,.10);color:rgba(255,255,255,.86)}
 .pill.lose{border-color:rgba(251,113,133,.38);background:rgba(251,113,133,.10);color:rgba(255,255,255,.86)}
+
+
+.playerRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}

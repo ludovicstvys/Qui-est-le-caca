@@ -12,7 +12,23 @@ model Friend {
   riotName  String   // gameName
   riotTag   String   // tagLine (ex: EUW)
   puuid     String?  @unique
-  region    String   @default("euw1")
+  
+  summonerId String? @unique
+
+  rankedSoloTier   String?
+  rankedSoloRank   String?
+  rankedSoloLP     Int?
+  rankedSoloWins   Int?
+  rankedSoloLosses Int?
+
+  rankedFlexTier   String?
+  rankedFlexRank   String?
+  rankedFlexLP     Int?
+  rankedFlexWins   Int?
+  rankedFlexLosses Int?
+
+  rankFetchedAt DateTime?
+region    String   @default("euw1")
   avatarUrl String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

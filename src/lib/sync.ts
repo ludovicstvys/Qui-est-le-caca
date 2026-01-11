@@ -1,5 +1,5 @@
 import { getPrisma } from "@/lib/prisma";
-import { getAccountByRiotId, getMatchById, getMatchIdsByPuuid, getMatchTimelineById } from "@/lib/riot";
+import {getAccountByRiotId, getLeagueEntriesBySummonerId, getMatchById, getMatchIdsByPuuid, getMatchTimelineById, getSummonerByPuuid} from "@/lib/riot";
 
 const DEFAULT_FRESHNESS_MINUTES = 30;
 
@@ -28,6 +28,70 @@ export async function ensureFriendPuuid(friendId: string) {
   });
 
   return acc.puuid;
+}
+
+export async function ensureFriendSummonerId(friendId: string) {
+  const prisma = getPrisma();
+  const friend = await prisma.friend.findUnique({ where: { id: friendId } });
+  if (!friend) throw new Error("Friend not found");
+
+  if (!friend.puuid) await ensureFriendPuuid(friendId);
+
+  const refreshed = await prisma.friend.findUnique({ where: { id: friendId } });
+  if (!refreshed?.puuid) throw new Error("Missing puuid");
+
+  if (refreshed.summonerId) return refreshed.summonerId;
+
+  const summ = await getSummonerByPuuid(refreshed.puuid);
+  const summonerId = summ?.id;
+  if (!summonerId) throw new Error("Unable to resolve summonerId");
+
+  await prisma.friend.update({
+    where: { id: friendId },
+    data: { summonerId },
+  });
+
+  return summonerId as string;
+}
+
+export async function syncFriendRank(friendId: string) {
+  const prisma = getPrisma();
+
+  const friend = await prisma.friend.findUnique({ where: { id: friendId } });
+  if (!friend) throw new Error("Friend not found");
+
+  // Refresh every 10 minutes max to avoid quota spikes
+  const freshMs = 10 * 60_000;
+  if (friend.rankFetchedAt && Date.now() - friend.rankFetchedAt.getTime() < freshMs) {
+    return { skipped: true };
+  }
+
+  const summonerId = await ensureFriendSummonerId(friendId);
+  const entries = await getLeagueEntriesBySummonerId(summonerId);
+
+  const solo = Array.isArray(entries) ? entries.find((e: any) => e?.queueType === "RANKED_SOLO_5x5") : null;
+  const flex = Array.isArray(entries) ? entries.find((e: any) => e?.queueType === "RANKED_FLEX_SR") : null;
+
+  await prisma.friend.update({
+    where: { id: friendId },
+    data: {
+      rankedSoloTier: solo?.tier ?? null,
+      rankedSoloRank: solo?.rank ?? null,
+      rankedSoloLP: typeof solo?.leaguePoints === "number" ? solo.leaguePoints : null,
+      rankedSoloWins: typeof solo?.wins === "number" ? solo.wins : null,
+      rankedSoloLosses: typeof solo?.losses === "number" ? solo.losses : null,
+
+      rankedFlexTier: flex?.tier ?? null,
+      rankedFlexRank: flex?.rank ?? null,
+      rankedFlexLP: typeof flex?.leaguePoints === "number" ? flex.leaguePoints : null,
+      rankedFlexWins: typeof flex?.wins === "number" ? flex.wins : null,
+      rankedFlexLosses: typeof flex?.losses === "number" ? flex.losses : null,
+
+      rankFetchedAt: new Date(),
+    },
+  });
+
+  return { skipped: false };
 }
 
 export async function syncFriendMatches(friendId: string, count = 10) {

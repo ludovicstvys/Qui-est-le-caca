@@ -102,3 +102,11 @@ export async function getSummonerByPuuid(puuid: string) {
   )}`;
   return riotFetch<any>(url);
 }
+
+// League-v4 (platform routing): current season ranked entries
+export async function getLeagueEntriesBySummonerId(encryptedSummonerId: string) {
+  const url = `https://${RIOT_REGION}.api.riotgames.com/lol/league/v4/entries/by-summoner/${encodeURIComponent(
+    encryptedSummonerId
+  )}`;
+  return riotFetch<any[]>(url);
+}

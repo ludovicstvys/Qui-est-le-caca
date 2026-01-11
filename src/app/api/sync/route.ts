@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";
-import { syncFriendMatches } from "@/lib/sync";
+import { syncFriendMatches, syncFriendRank } from "@/lib/sync";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +17,7 @@ export async function POST(req: Request) {
   // Sequential sync to reduce Riot quota spikes
   for (const f of friends) {
     try {
+      await syncFriendRank(f.id);
       await syncFriendMatches(f.id, Number.isFinite(count) ? Math.max(1, Math.min(count, 50)) : 10);
       results.push({ friendId: f.id, riot: `${f.riotName}#${f.riotTag}`, ok: true });
     } catch (e: any) {

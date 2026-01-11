@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fileToAvatarDataUrl } from "@/lib/avatar";
+import { queueLabel } from "@/lib/queues";
 
 type Friend = {
   id: string;
@@ -9,6 +10,11 @@ type Friend = {
   riotTag: string;
   puuid: string | null;
   avatarUrl: string | null;
+  rankedSoloTier?: string | null;
+  rankedSoloRank?: string | null;
+  rankedSoloLP?: number | null;
+  rankedSoloWins?: number | null;
+  rankedSoloLosses?: number | null;
 };
 
 type ApiMatch = {
@@ -152,6 +158,8 @@ export default function FriendPage({ params }: { params: { id: string } }) {
             k: p.kills ?? 0,
             d: p.deaths ?? 0,
             a: p.assists ?? 0,
+            gold: p.goldEarned ?? null,
+            dmg: p.totalDamageDealtToChampions ?? null,
           })),
           enemies: enemies.map((p: any) => ({
             name: displayName(p),
@@ -159,6 +167,8 @@ export default function FriendPage({ params }: { params: { id: string } }) {
             k: p.kills ?? 0,
             d: p.deaths ?? 0,
             a: p.assists ?? 0,
+            gold: p.goldEarned ?? null,
+            dmg: p.totalDamageDealtToChampions ?? null,
           })),
         };
       })
@@ -192,7 +202,17 @@ export default function FriendPage({ params }: { params: { id: string } }) {
               <span>{friend ? `${friend.riotName}#${friend.riotTag}` : "Profil"}</span>
               {friend?.puuid ? <span className="badge">PUUID OK</span> : <span className="badge">PUUID en attente</span>}
             </h1>
-            <p className="p">Résumé + détails des games (alliés / ennemis, KDA, etc.).</p>
+            <p className="p">Résumé + détails des games (mode, alliés/ennemis, KDA, dégâts, gold).</p>
+            {friend?.rankedSoloTier ? (
+              <p className="p" style={{ marginTop: 4 }}>
+                Ranked Solo: <b>{friend.rankedSoloTier} {friend.rankedSoloRank}</b> · <b>{friend.rankedSoloLP ?? 0} LP</b>
+                {friend.rankedSoloWins != null && friend.rankedSoloLosses != null && (
+                  <> · WR <b>{(() => { const t = (friend.rankedSoloWins ?? 0) + (friend.rankedSoloLosses ?? 0); return t ? Math.round(((friend.rankedSoloWins ?? 0) / t) * 100) : 0; })()}%</b> ({friend.rankedSoloWins}-{friend.rankedSoloLosses})</>
+                )}
+              </p>
+            ) : (
+              <p className="p" style={{ marginTop: 4 }}>Ranked Solo: <b>Unranked</b></p>
+            )}
           </div>
         </div>
 
@@ -263,6 +283,7 @@ export default function FriendPage({ params }: { params: { id: string } }) {
                 <div key={r.matchId} className="match">
                   <div className="matchTop">
                     <div className={`pill ${r.win ? "win" : "lose"}`}>{r.win ? "VICTOIRE" : "DÉFAITE"}</div>
+                    <div className="pill">{queueLabel(r.queueId)}</div>
                     <div className="pill">{r.champ}</div>
                     <div className="pill">{fmtDuration(r.duration)}</div>
                     <div className="pill">{r.date}</div>
@@ -288,6 +309,8 @@ export default function FriendPage({ params }: { params: { id: string } }) {
                             <span className="pill">{p.champ}</span>
                             <span className="small" style={{ flex: 1, marginLeft: 10 }}>{p.name}</span>
                             <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k}/{p.d}/{p.a}</b></span>
+                            {p.dmg != null && <span className="pill">DMG <b style={{ marginLeft: 6 }}>{p.dmg}</b></span>}
+                            {p.gold != null && <span className="pill">Gold <b style={{ marginLeft: 6 }}>{p.gold}</b></span>}
                           </div>
                         ))}
                       </div>
@@ -301,6 +324,8 @@ export default function FriendPage({ params }: { params: { id: string } }) {
                             <span className="pill">{p.champ}</span>
                             <span className="small" style={{ flex: 1, marginLeft: 10 }}>{p.name}</span>
                             <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k}/{p.d}/{p.a}</b></span>
+                            {p.dmg != null && <span className="pill">DMG <b style={{ marginLeft: 6 }}>{p.dmg}</b></span>}
+                            {p.gold != null && <span className="pill">Gold <b style={{ marginLeft: 6 }}>{p.gold}</b></span>}
                           </div>
                         ))}
                       </div>

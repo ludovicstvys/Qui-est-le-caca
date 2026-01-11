@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fileToAvatarDataUrl } from "@/lib/avatar";
+import { formatRank, winrate } from "@/lib/rank";
 
 type Friend = {
   id: string;
@@ -9,6 +10,11 @@ type Friend = {
   riotTag: string;
   puuid?: string | null;
   avatarUrl?: string | null;
+  rankedSoloTier?: string | null;
+  rankedSoloRank?: string | null;
+  rankedSoloLP?: number | null;
+  rankedSoloWins?: number | null;
+  rankedSoloLosses?: number | null;
 };
 
 function initials(name: string) {
@@ -106,7 +112,7 @@ export default function HomePage() {
           </div>
           <div>
             <h1 className="h1">Monkeys dashboard</h1>
-            <p className="p">Stats LoL (dark) pour tes potes — Riot API + SQL + cache.</p>
+            <p className="p">Stats LoL (dark) — rank, LP & winrate ranked — Riot API + SQL + cache.</p>
           </div>
         </div>
 
@@ -206,6 +212,13 @@ export default function HomePage() {
                   <div>
                     <div className="name">{f.riotName}#{f.riotTag}</div>
                     <div className="sub">{f.puuid ? "Compte lié ✅" : "Compte pas encore résolu (sync) ⏳"}</div>
+                    <div className="sub" style={{ marginTop: 6 }}>
+                      Solo: <b>{formatRank(f.rankedSoloTier ?? null, f.rankedSoloRank ?? null, f.rankedSoloLP ?? null)}</b>
+                      {winrate(f.rankedSoloWins ?? null, f.rankedSoloLosses ?? null) != null && (
+                        <> · WR <b>{winrate(f.rankedSoloWins ?? null, f.rankedSoloLosses ?? null)}%</b> ({f.rankedSoloWins ?? 0}-{f.rankedSoloLosses ?? 0})</>
+                      )}
+                    </div>
+
                   </div>
 
                   <div className="spacer" />
