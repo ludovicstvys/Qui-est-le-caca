@@ -36,7 +36,7 @@ export async function ensureFriendPuuid(friendId: string) {
 
   if (friend.puuid) return friend.puuid;
 
-  const acc = await getAccountByRiotId(friend.riotName, friend.riotTag);
+  const acc = await getAccountByRiotId(friend.riotName, friend.riotTag, { friendId, label: "account/by-riot-id" });
   await prisma.friend.update({
     where: { id: friendId },
     data: { puuid: acc.puuid },
@@ -53,7 +53,7 @@ export async function ensureFriendSummonerId(friendId: string) {
   const puuid = friend.puuid ?? (await ensureFriendPuuid(friendId));
   if (friend.summonerId) return friend.summonerId;
 
-  const summ = await getSummonerByPuuid(puuid);
+  const summ = await getSummonerByPuuid(puuid, { friendId, label: "summoner/by-puuid" });
   const summonerId = summ?.id;
   if (!summonerId) throw new Error("Unable to resolve summonerId");
 
@@ -78,7 +78,19 @@ export async function syncFriendRank(friendId: string) {
   }
 
   const summonerId = await ensureFriendSummonerId(friendId);
-  const entries = await getLeagueEntriesBySummonerId(summonerId);
+  const entries = await getLeagueEntriesBySummonerId(summonerId, { friendId, label: "league/entries/by-summoner" });
+
+  if (
+    (() => {
+      const v = String(process.env.DEBUG_RIOT || "").trim().toLowerCase();
+      return v === "1" || v === "true" || v === "yes" || v === "on";
+    })() &&
+    Array.isArray(entries) &&
+    entries.length === 0
+  ) {
+    // eslint-disable-next-line no-console
+    console.log(`[DEBUG_RIOT] friendId=${friendId} label=league/entries/by-summoner empty []`, { summonerId });
+  }
 
   const solo = Array.isArray(entries) ? entries.find((e: any) => e?.queueType === "RANKED_SOLO_5x5") : null;
   const flex = Array.isArray(entries) ? entries.find((e: any) => e?.queueType === "RANKED_FLEX_SR") : null;
@@ -254,7 +266,7 @@ export async function syncFriendMatches(
         start,
         count: Math.min(pageSize, left),
         startTime,
-      });
+      }, { friendId, label: "match/ids/by-puuid" });
 
       if (!Array.isArray(page) || page.length === 0) break;
 
@@ -268,7 +280,7 @@ export async function syncFriendMatches(
     matchIds = Array.from(new Set(matchIds));
   } else {
     const count = Number.isFinite(Number(opts.count)) ? Math.max(1, Math.min(Number(opts.count), 50)) : 10;
-    matchIds = await getMatchIdsByPuuid(puuid, count);
+    matchIds = await getMatchIdsByPuuid(puuid, count, { friendId, label: "match/ids/by-puuid" });
   }
 
   // 1) FK requires Match rows to exist before FriendMatch rows.
@@ -295,7 +307,7 @@ export async function syncFriendMatches(
       !existing || !hasMatchPayload(existing.rawJson) || !isFresh(existing.fetchedAt);
 
     if (shouldFetchMatch) {
-      const raw = await getMatchById(matchId);
+      const raw = await getMatchById(matchId, { friendId, label: "match/by-id" });
       const info = raw?.info;
 
       const gameStartMs =
@@ -325,7 +337,7 @@ export async function syncFriendMatches(
         if (existing && hasMatchPayload(existing.rawJson)) {
           await upsertParticipants(matchId, existing.rawJson);
         } else {
-          const raw = await getMatchById(matchId);
+          const raw = await getMatchById(matchId, { friendId, label: "match/by-id" });
           await prisma.match.update({
             where: { id: matchId },
             data: { rawJson: raw, fetchedAt: new Date() },
@@ -341,7 +353,7 @@ export async function syncFriendMatches(
         !current?.timelineJson || !current?.timelineFetchedAt || !isFresh(current.timelineFetchedAt);
 
       if (shouldFetchTimeline) {
-        const timeline = await getMatchTimelineById(matchId);
+        const timeline = await getMatchTimelineById(matchId, { friendId, label: "match/timeline" });
         await prisma.match.update({
           where: { id: matchId },
           data: { timelineJson: timeline, timelineFetchedAt: new Date() },

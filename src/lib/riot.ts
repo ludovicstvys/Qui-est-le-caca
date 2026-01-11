@@ -2,6 +2,39 @@ const RIOT_API_KEY = process.env.RIOT_API_KEY!;
 const RIOT_REGION = (process.env.RIOT_REGION || "euw1").toLowerCase();      // platform routing: euw1
 const RIOT_ROUTING = (process.env.RIOT_ROUTING || "europe").toLowerCase();  // regional routing: europe
 const RIOT_MIN_DELAY_MS = Number(process.env.RIOT_MIN_DELAY_MS || "140");
+const DEBUG_RIOT = (() => {
+  const v = String(process.env.DEBUG_RIOT || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+})();
+
+export type RiotDebugCtx = {
+  friendId?: string;
+  label?: string;
+};
+
+function sanitizeUrl(rawUrl: string) {
+  // Riot API key is sent in headers, but keep this in case a query param is ever added.
+  try {
+    const u = new URL(rawUrl);
+    if (u.searchParams.has("api_key")) u.searchParams.delete("api_key");
+    if (u.searchParams.has("X-Riot-Token")) u.searchParams.delete("X-Riot-Token");
+    return u.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
+function debugLog(ctx: RiotDebugCtx | undefined, msg: string, extra?: Record<string, any>) {
+  if (!DEBUG_RIOT) return;
+  const prefix = `[DEBUG_RIOT]${ctx?.friendId ? ` friendId=${ctx.friendId}` : ""}${ctx?.label ? ` label=${ctx.label}` : ""}`;
+  if (extra) {
+    // eslint-disable-next-line no-console
+    console.log(`${prefix} ${msg}`, extra);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`${prefix} ${msg}`);
+  }
+}
 
 function assertEnv() {
   if (!RIOT_API_KEY) throw new Error("Missing RIOT_API_KEY");
@@ -47,15 +80,21 @@ function parseRetryAfterSeconds(res: Response) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-async function riotFetch<T>(url: string, attempt = 0): Promise<T> {
+async function riotFetch<T>(url: string, attempt = 0, ctx?: RiotDebugCtx): Promise<T> {
   return withQueue(async () => {
     assertEnv();
     await throttle();
 
-  const res = await fetch(url, {
-    headers: { "X-Riot-Token": RIOT_API_KEY },
-    cache: "no-store",
-  });
+    const safeUrl = sanitizeUrl(url);
+    debugLog(ctx, `-> ${safeUrl}`);
+
+    const t0 = Date.now();
+    const res = await fetch(url, {
+      headers: { "X-Riot-Token": RIOT_API_KEY },
+      cache: "no-store",
+    });
+
+    debugLog(ctx, `<- ${res.status} ${safeUrl}`, { ms: Date.now() - t0 });
 
   // Rate limit: retry with delay (Retry-After if present), then exponential backoff.
   if (res.status === 429) {
@@ -64,9 +103,11 @@ async function riotFetch<T>(url: string, attempt = 0): Promise<T> {
     const jitter = Math.floor(Math.random() * 250);
     const delay = Math.min(base + jitter, 15_000);
 
+    debugLog(ctx, `rate-limited (429) - retry in ${delay}ms`, { attempt, retryAfterS });
+
     if (attempt < 5) {
       await sleep(delay);
-      return riotFetch<T>(url, attempt + 1);
+      return riotFetch<T>(url, attempt + 1, ctx);
     }
   }
 
@@ -74,12 +115,16 @@ async function riotFetch<T>(url: string, attempt = 0): Promise<T> {
   if (res.status >= 500 && res.status < 600 && attempt < 3) {
     const delay = Math.min(600 * Math.pow(2, attempt) + Math.floor(Math.random() * 200), 5_000);
     await sleep(delay);
-    return riotFetch<T>(url, attempt + 1);
+    debugLog(ctx, `server error (${res.status}) - retry in ${delay}ms`, { attempt });
+    return riotFetch<T>(url, attempt + 1, ctx);
   }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(`Riot API error ${res.status} ${res.statusText} - ${text}`);
+    // keep the error readable in logs
+    const snippet = (text || "").slice(0, 400);
+    debugLog(ctx, `error ${res.status} ${res.statusText}`, { body: snippet });
+    throw new Error(`Riot API error ${res.status} ${res.statusText} - ${snippet}`);
   }
 
   return (await res.json()) as T;
@@ -87,17 +132,18 @@ async function riotFetch<T>(url: string, attempt = 0): Promise<T> {
 }
 
 // Account-v1 (regional routing)
-export async function getAccountByRiotId(gameName: string, tagLine: string) {
+export async function getAccountByRiotId(gameName: string, tagLine: string, ctx?: RiotDebugCtx) {
   const url = `https://${RIOT_ROUTING}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(
     gameName
   )}/${encodeURIComponent(tagLine)}`;
-  return riotFetch<{ puuid: string; gameName: string; tagLine: string }>(url);
+  return riotFetch<{ puuid: string; gameName: string; tagLine: string }>(url, 0, ctx);
 }
 
 // Match-v5 (regional routing)
 export async function getMatchIdsByPuuid(
   puuid: string,
-  countOrOpts: number | { start?: number; count?: number; startTime?: number; endTime?: number } = 10
+  countOrOpts: number | { start?: number; count?: number; startTime?: number; endTime?: number } = 10,
+  ctx?: RiotDebugCtx
 ) {
   const opts =
     typeof countOrOpts === "number"
@@ -113,33 +159,33 @@ export async function getMatchIdsByPuuid(
   const url = `https://${RIOT_ROUTING}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(
     puuid
   )}/ids?${params.toString()}`;
-  return riotFetch<string[]>(url);
+  return riotFetch<string[]>(url, 0, ctx);
 }
 
-export async function getMatchById(matchId: string) {
+export async function getMatchById(matchId: string, ctx?: RiotDebugCtx) {
   const url = `https://${RIOT_ROUTING}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(matchId)}`;
-  return riotFetch<any>(url);
+  return riotFetch<any>(url, 0, ctx);
 }
 
-export async function getMatchTimelineById(matchId: string) {
+export async function getMatchTimelineById(matchId: string, ctx?: RiotDebugCtx) {
   const url = `https://${RIOT_ROUTING}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(
     matchId
   )}/timeline`;
-  return riotFetch<any>(url);
+  return riotFetch<any>(url, 0, ctx);
 }
 
 // Summoner-v4 (platform routing) - optional if you want level/icon/etc
-export async function getSummonerByPuuid(puuid: string) {
+export async function getSummonerByPuuid(puuid: string, ctx?: RiotDebugCtx) {
   const url = `https://${RIOT_REGION}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${encodeURIComponent(
     puuid
   )}`;
-  return riotFetch<any>(url);
+  return riotFetch<any>(url, 0, ctx);
 }
 
 // League-v4 (platform routing): current season ranked entries
-export async function getLeagueEntriesBySummonerId(encryptedSummonerId: string) {
+export async function getLeagueEntriesBySummonerId(encryptedSummonerId: string, ctx?: RiotDebugCtx) {
   const url = `https://${RIOT_REGION}.api.riotgames.com/lol/league/v4/entries/by-summoner/${encodeURIComponent(
     encryptedSummonerId
   )}`;
-  return riotFetch<any[]>(url);
+  return riotFetch<any[]>(url, 0, ctx);
 }
