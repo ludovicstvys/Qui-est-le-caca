@@ -1,0 +1,129 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // change to "sqlite" if you use SQLite
+  url      = env("DATABASE_URL")
+}
+
+model Friend {
+  id        String   @id @default(cuid())
+  riotName  String   // gameName
+  riotTag   String   // tagLine (ex: EUW)
+  puuid     String?  @unique
+  
+  summonerId String? @unique
+
+  rankedSoloTier   String?
+  rankedSoloRank   String?
+  rankedSoloLP     Int?
+  rankedSoloWins   Int?
+  rankedSoloLosses Int?
+
+  rankedFlexTier   String?
+  rankedFlexRank   String?
+  rankedFlexLP     Int?
+  rankedFlexWins   Int?
+  rankedFlexLosses Int?
+
+  rankFetchedAt DateTime?
+region    String   @default("euw1")
+  avatarUrl String?
+  lastMatchId String?
+  lastSyncAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  matches   FriendMatch[]
+}
+
+model Match {
+  id            String   @id // matchId
+  platform      String?
+  gameStartMs   BigInt?
+  gameDurationS Int?
+  queueId       Int?
+  rawJson       Json
+  timelineJson Json?
+  timelineFetchedAt DateTime?
+  fetchedAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  friends       FriendMatch[]
+  participants  MatchParticipant[]
+
+  @@index([fetchedAt])
+}
+
+model FriendMatch {
+  friendId String
+  matchId  String
+  addedAt  DateTime @default(now())
+
+  friend   Friend @relation(fields: [friendId], references: [id], onDelete: Cascade)
+  match    Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@id([friendId, matchId])
+  @@index([matchId])
+  @@index([friendId, addedAt])
+}
+
+
+model MatchParticipant {
+  matchId String
+  puuid   String
+
+  teamId Int?
+  win    Boolean?
+
+  summonerName   String?
+  riotIdGameName String?
+  riotIdTagline  String?
+
+  championName String?
+  lane         String?
+  role         String?
+
+  kills   Int?
+  deaths  Int?
+  assists Int?
+
+  goldEarned Int?
+  totalDamageDealtToChampions Int?
+  visionScore Int?
+  totalMinionsKilled Int?
+  neutralMinionsKilled Int?
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@id([matchId, puuid])
+  @@index([puuid])
+  @@index([matchId, teamId])
+}
+
+model RankSnapshot {
+  id       String   @id @default(cuid())
+  friendId String
+  queueType String
+
+  tier   String?
+  rank   String?
+  lp     Int?
+  wins   Int?
+  losses Int?
+
+  createdAt DateTime @default(now())
+
+  friend Friend @relation(fields: [friendId], references: [id], onDelete: Cascade)
+
+  @@index([friendId, createdAt])
+  @@index([queueType, createdAt])
+}
+
+model SyncLock {
+  id          Int      @id
+  lockedUntil DateTime?
+  updatedAt   DateTime @updatedAt
+}
