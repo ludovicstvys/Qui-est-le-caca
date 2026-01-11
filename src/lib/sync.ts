@@ -71,9 +71,10 @@ export async function ensureFriendSummonerId(friendId: string) {
   const summ = await getSummonerByPuuid(puuid, { friendId, label: "summoner/by-puuid" });
   let summonerId: string | null = pickSummonerId(summ);
 
-  // Some dev keys / edge cases have been observed to return a partial payload for by-puuid
-  // (e.g., only puuid + profileIconId + revisionDate + summonerLevel). If so, fall back to by-name.
-  if (!summonerId && friend.riotName) {
+  // Some keys / edge cases have been observed to return a partial payload for by-puuid
+  // (e.g., only puuid + profileIconId + revisionDate + summonerLevel). When that happens,
+  // we can still derive the encrypted summonerId from Match-v5 participant data.
+  if (!summonerId) {
     if (debugOn) {
       // eslint-disable-next-line no-console
       console.log(
@@ -82,6 +83,48 @@ export async function ensureFriendSummonerId(friendId: string) {
       );
     }
 
+    try {
+      const matchIds = await getMatchIdsByPuuid(puuid, 1, { friendId, label: "match/ids/by-puuid (for summonerId)" });
+      const matchId = Array.isArray(matchIds) ? matchIds[0] : null;
+      if (matchId) {
+        const match = await getMatchById(matchId, { friendId, label: "match/by-id (for summonerId)" });
+        const participants = match?.info?.participants;
+        const me = Array.isArray(participants)
+          ? participants.find((p: any) => p?.puuid === puuid)
+          : null;
+
+        const fromMatch = me?.summonerId ?? me?.summoner_id ?? null;
+        if (fromMatch) {
+          summonerId = String(fromMatch);
+          if (debugOn) {
+            // eslint-disable-next-line no-console
+            console.log(`[DEBUG_RIOT] friendId=${friendId} label=summonerId/from-match ok`, {
+              matchId,
+            });
+          }
+        } else if (debugOn) {
+          // eslint-disable-next-line no-console
+          console.log(`[DEBUG_RIOT] friendId=${friendId} label=summonerId/from-match missing`, {
+            matchId,
+            participantKeys: me && typeof me === "object" ? Object.keys(me) : typeof me,
+          });
+        }
+      } else if (debugOn) {
+        // eslint-disable-next-line no-console
+        console.log(`[DEBUG_RIOT] friendId=${friendId} label=summonerId/from-match no matches`);
+      }
+    } catch (e: any) {
+      if (debugOn) {
+        // eslint-disable-next-line no-console
+        console.log(`[DEBUG_RIOT] friendId=${friendId} label=summonerId/from-match error`, {
+          message: e?.message ?? String(e),
+        });
+      }
+    }
+  }
+
+  // As a last resort, try Summoner-v4 by-name (deprecated). Note: can be blocked / forbidden depending on key.
+  if (!summonerId && friend.riotName) {
     const byName = await getSummonerByName(friend.riotName, { friendId, label: "summoner/by-name" });
 
     // If by-name resolves to a different PUUID, do NOT trust it (names are no longer globally unique).
@@ -107,7 +150,7 @@ export async function ensureFriendSummonerId(friendId: string) {
 
   if (!summonerId) {
     throw new Error(
-      "Unable to resolve summonerId (Summoner-v4 by-puuid returned no id; tried by-name fallback)."
+      "Unable to resolve summonerId (Summoner-v4 by-puuid returned no id; tried Match-v5 participant fallback and by-name fallback)."
     );
   }
 
