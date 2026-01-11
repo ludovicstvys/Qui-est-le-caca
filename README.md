@@ -167,3 +167,22 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY="xxxxx"
 - `/friend/:id` : stats d’un monkey + teams allies/ennemis + dégâts/gold
 - `/match/:matchId` : détail du match
 - `/synergy` : duo winrate quand 2 monkeys jouent ensemble
+
+
+---
+
+## Si tu vois l'erreur `public.SyncLock does not exist`
+➡️ Deux solutions :
+
+1) **SQL (recommandé)**
+Crée la table avec le nom EXACT (avec guillemets) :
+```sql
+create table if not exists "SyncLock" (
+  "id" int4 primary key,
+  "lockedUntil" timestamptz null,
+  "updatedAt" timestamptz not null default now()
+);
+```
+
+2) **Auto-heal**
+Cette version du code auto-crée la table si elle manque (au premier appel de sync).
