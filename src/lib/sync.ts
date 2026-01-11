@@ -5,6 +5,7 @@ import {
   getMatchById,
   getMatchIdsByPuuid,
   getMatchTimelineById,
+  getSummonerByName,
   getSummonerByPuuid,
 } from "@/lib/riot";
 
@@ -53,9 +54,62 @@ export async function ensureFriendSummonerId(friendId: string) {
   const puuid = friend.puuid ?? (await ensureFriendPuuid(friendId));
   if (friend.summonerId) return friend.summonerId;
 
+  const debugOn = (() => {
+    const v = String(process.env.DEBUG_RIOT || "").trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes" || v === "on";
+  })();
+
+  const pickSummonerId = (summ: any) =>
+    summ?.id ??
+    summ?.summonerId ??
+    summ?.encryptedSummonerId ??
+    summ?.encryptedSummonerID ??
+    summ?.encrypted_summoner_id ??
+    summ?.summoner_id ??
+    null;
+
   const summ = await getSummonerByPuuid(puuid, { friendId, label: "summoner/by-puuid" });
-  const summonerId = summ?.id;
-  if (!summonerId) throw new Error("Unable to resolve summonerId");
+  let summonerId: string | null = pickSummonerId(summ);
+
+  // Some dev keys / edge cases have been observed to return a partial payload for by-puuid
+  // (e.g., only puuid + profileIconId + revisionDate + summonerLevel). If so, fall back to by-name.
+  if (!summonerId && friend.riotName) {
+    if (debugOn) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[DEBUG_RIOT] friendId=${friendId} label=summoner/by-puuid missing summonerId fields`,
+        { keys: summ && typeof summ === "object" ? Object.keys(summ) : typeof summ }
+      );
+    }
+
+    const byName = await getSummonerByName(friend.riotName, { friendId, label: "summoner/by-name" });
+
+    // If by-name resolves to a different PUUID, do NOT trust it (names are no longer globally unique).
+    if (byName?.puuid && byName.puuid !== puuid) {
+      if (debugOn) {
+        // eslint-disable-next-line no-console
+        console.log(`[DEBUG_RIOT] friendId=${friendId} label=summoner/by-name puuid mismatch`, {
+          expectedPuuid: puuid,
+          gotPuuid: byName.puuid,
+        });
+      }
+    } else {
+      summonerId = pickSummonerId(byName);
+      if (!summonerId && debugOn) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[DEBUG_RIOT] friendId=${friendId} label=summoner/by-name missing summonerId fields`,
+          { keys: byName && typeof byName === "object" ? Object.keys(byName) : typeof byName }
+        );
+      }
+    }
+  }
+
+  if (!summonerId) {
+    throw new Error(
+      "Unable to resolve summonerId (Summoner-v4 by-puuid returned no id; tried by-name fallback)."
+    );
+  }
 
   await prisma.friend.update({
     where: { id: friendId },

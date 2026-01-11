@@ -182,6 +182,15 @@ export async function getSummonerByPuuid(puuid: string, ctx?: RiotDebugCtx) {
   return riotFetch<any>(url, 0, ctx);
 }
 
+// Summoner-v4 (platform routing) - deprecated (summonerName), but can be useful as a fallback
+// when Summoner-v4 by-puuid returns a partial payload that does not include the encrypted summonerId.
+export async function getSummonerByName(summonerName: string, ctx?: RiotDebugCtx) {
+  const url = `https://${RIOT_REGION}.api.riotgames.com/lol/summoner/v4/summoners/by-name/${encodeURIComponent(
+    summonerName
+  )}`;
+  return riotFetch<any>(url, 0, ctx);
+}
+
 // League-v4 (platform routing): current season ranked entries
 export async function getLeagueEntriesBySummonerId(encryptedSummonerId: string, ctx?: RiotDebugCtx) {
   const url = `https://${RIOT_REGION}.api.riotgames.com/lol/league/v4/entries/by-summoner/${encodeURIComponent(
