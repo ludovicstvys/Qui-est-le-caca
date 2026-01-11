@@ -1,27 +1,44 @@
 const RIOT_API_KEY = process.env.RIOT_API_KEY!;
 const RIOT_REGION = (process.env.RIOT_REGION || "euw1").toLowerCase();      // platform routing: euw1
 const RIOT_ROUTING = (process.env.RIOT_ROUTING || "europe").toLowerCase();  // regional routing: europe
+const RIOT_MIN_DELAY_MS = Number(process.env.RIOT_MIN_DELAY_MS || "140");
 
 function assertEnv() {
   if (!RIOT_API_KEY) throw new Error("Missing RIOT_API_KEY");
 }
 
+// Soft throttling to smooth bursts (helps with quota).
+// Default: ~140ms between requests in the SAME function invocation (configurable via RIOT_MIN_DELAY_MS).
+let lastReqAt = 0;
+
+// Promise queue => ensures calls are serialized inside a single invocation
+let inFlight: Promise<void> = Promise.resolve();
+
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Soft throttling to smooth bursts (helps with quota).
-// Default: 120ms between requests in the SAME function invocation.
-let lastReqAt = 0;
 async function throttle() {
-  const minMs = Number(process.env.RIOT_MIN_DELAY_MS || 120);
-  if (!Number.isFinite(minMs) || minMs <= 0) return;
-
   const now = Date.now();
-  const wait = lastReqAt + minMs - now;
+  const minDelay = Number.isFinite(RIOT_MIN_DELAY_MS) ? Math.max(0, RIOT_MIN_DELAY_MS) : 140;
+  const wait = Math.max(0, minDelay - (now - lastReqAt));
   if (wait > 0) await sleep(wait);
   lastReqAt = Date.now();
 }
+
+async function withQueue<T>(fn: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const prev = inFlight;
+  inFlight = prev.then(() => gate);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 
 function parseRetryAfterSeconds(res: Response) {
   const h = res.headers.get("retry-after") ?? res.headers.get("Retry-After");
@@ -31,8 +48,9 @@ function parseRetryAfterSeconds(res: Response) {
 }
 
 async function riotFetch<T>(url: string, attempt = 0): Promise<T> {
-  assertEnv();
-  await throttle();
+  return withQueue(async () => {
+    assertEnv();
+    await throttle();
 
   const res = await fetch(url, {
     headers: { "X-Riot-Token": RIOT_API_KEY },
@@ -65,6 +83,7 @@ async function riotFetch<T>(url: string, attempt = 0): Promise<T> {
   }
 
   return (await res.json()) as T;
+  });
 }
 
 // Account-v1 (regional routing)

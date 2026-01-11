@@ -2,14 +2,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fileToAvatarDataUrl } from "@/lib/avatar";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 import { queueLabel } from "@/lib/queues";
+import { formatRank, winrate } from "@/lib/rank";
+import { Skeleton } from "@/components/Skeleton";
+import { ToastHost, Toast } from "@/components/ToastHost";
 
 type Friend = {
   id: string;
   riotName: string;
   riotTag: string;
+  region: string;
   puuid: string | null;
   avatarUrl: string | null;
+
   rankedSoloTier?: string | null;
   rankedSoloRank?: string | null;
   rankedSoloLP?: number | null;
@@ -17,331 +23,332 @@ type Friend = {
   rankedSoloLosses?: number | null;
 };
 
-type ApiMatch = {
+type Player = {
+  puuid: string;
+  name: string;
+  champ: string | null;
+  lane: string | null;
+  role: string | null;
+  k: number | null;
+  d: number | null;
+  a: number | null;
+  cs: number;
+  vision: number | null;
+  dmg: number | null;
+  gold: number | null;
+};
+
+type MatchRow = {
   matchId: string;
   gameStartMs: string | null;
   gameDurationS: number | null;
   queueId: number | null;
-  raw: any;
+  win: boolean | null;
+  champ: string | null;
+  lane: string | null;
+  role: string | null;
+  k: number | null;
+  d: number | null;
+  a: number | null;
+  cs: number | null;
+  vision: number | null;
+  dmg: number | null;
+  gold: number | null;
+  team: { allyKills: number; enemyKills: number; allyGold: number; enemyGold: number; allyDmg: number; enemyDmg: number };
+  allies: Player[];
+  enemies: Player[];
 };
+
+type Summary = {
+  champs: Array<{ champ: string; games: number; wins: number; winrate: number }>;
+  lanes: Array<{ lane: string; games: number }>;
+  roles: Array<{ role: string; games: number }>;
+  sample: number;
+};
+
+function fmtWhen(ms?: string | null) {
+  if (!ms) return "n/a";
+  const d = new Date(Number(ms));
+  return d.toLocaleString();
+}
+function fmtDur(s?: number | null) {
+  if (!s) return "n/a";
+  const m = Math.floor(s / 60);
+  const ss = s % 60;
+  return `${m}m ${String(ss).padStart(2, "0")}s`;
+}
 
 function initials(name: string) {
   const parts = name.split(/\s+/).filter(Boolean);
   const a = (parts[0]?.[0] ?? "M").toUpperCase();
-  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "D").toUpperCase();
+  const b = (parts[1]?.[0] ?? parts[0]?.[1] ?? "K").toUpperCase();
   return a + b;
-}
-
-function fmtDuration(s?: number | null) {
-  if (!s || !Number.isFinite(s)) return "n/a";
-  const m = Math.floor(s / 60);
-  const r = Math.floor(s % 60);
-  return `${m}m ${r.toString().padStart(2, "0")}s`;
-}
-
-function displayName(p: any) {
-  const gn = p?.riotIdGameName;
-  const tl = p?.riotIdTagline;
-  if (gn && tl) return `${gn}#${tl}`;
-  return p?.summonerName ?? "Unknown";
 }
 
 export default function FriendPage({ params }: { params: { id: string } }) {
   const [friend, setFriend] = useState<Friend | null>(null);
-  const [matches, setMatches] = useState<ApiMatch[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [matches, setMatches] = useState<MatchRow[] | null>(null);
+  const [summary, setSummary] = useState<Summary | null>(null);
   const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState<{ type: "ok" | "err"; msg: string } | null>(null);
+
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  function pushToast(type: Toast["type"], msg: string) {
+    setToasts((t) => [...t, { id: `${Date.now()}-${Math.random()}`, type, msg }]);
+  }
+  function removeToast(id: string) {
+    setToasts((t) => t.filter((x) => x.id !== id));
+  }
 
   async function loadAll() {
-    setLoading(true);
-    const [fRes, mRes] = await Promise.all([
-      fetch(`/api/friends/${params.id}`, { cache: "no-store" }),
-      fetch(`/api/friends/${params.id}/matches`, { cache: "no-store" }),
+    const [f, m, s] = await Promise.all([
+      fetch(`/api/friends/${params.id}`, { cache: "no-store" }).then((r) => r.json()),
+      fetch(`/api/friends/${params.id}/matches?take=12`, { cache: "no-store" }).then((r) => r.json()),
+      fetch(`/api/friends/${params.id}/summary`, { cache: "no-store" }).then((r) => r.json()),
     ]);
-    const fJson = await fRes.json().catch(() => ({}));
-    const mJson = await mRes.json().catch(() => ({}));
-    if (!fRes.ok) throw new Error(fJson.error ?? "Impossible de charger le profil.");
-    setFriend(fJson);
-    setMatches(Array.isArray(mJson) ? mJson : []);
-    setLoading(false);
+    setFriend(f);
+    setMatches(Array.isArray(m) ? m : []);
+    setSummary(s?.ok ? s : { champs: [], lanes: [], roles: [], sample: 0 });
   }
 
   useEffect(() => {
-    loadAll().catch((e) => {
-      setToast({ type: "err", msg: e.message });
-      setLoading(false);
-    });
+    loadAll().catch((e) => pushToast("err", e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.id]);
 
-  async function syncAll() {
-    // Global sync, then refresh this profile
+  const wr = useMemo(() => winrate(friend?.rankedSoloWins ?? null, friend?.rankedSoloLosses ?? null), [friend]);
+
+  async function syncMe() {
     setBusy(true);
-    setToast(null);
-    const res = await fetch(`/api/sync?count=10`, { method: "POST" });
+    pushToast("info", "Sync du monkey… (rank + matchs)");
+    const res = await fetch(`/api/friends/${params.id}/sync?count=12`, { method: "POST" });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.ok) setToast({ type: "err", msg: json.error ?? "Erreur sync" });
-    else setToast({ type: "ok", msg: `Sync global OK ✅ (${json.okCount}/${json.total})` });
+    if (!res.ok || !json.ok) pushToast("err", json.error ?? "Erreur sync");
+    else pushToast("ok", "Sync OK ✅");
     await loadAll().catch(() => {});
     setBusy(false);
   }
 
-  async function updateAvatar(file?: File | null) {
+  async function uploadAvatar(file?: File | null) {
     if (!file) return;
+    if (!friend) return;
+
     setBusy(true);
     try {
-      const dataUrl = await fileToAvatarDataUrl(file, 128, 0.82);
-      if (dataUrl.length > 180_000) throw new Error("Avatar trop lourd après compression.");
-      const res = await fetch(`/api/friends/${params.id}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ avatarUrl: dataUrl }),
-      });
-      if (!res.ok) throw new Error("Impossible d'enregistrer l'avatar.");
-      setToast({ type: "ok", msg: "Avatar mis à jour ✨" });
-      await loadAll();
+      // Prefer Supabase Storage if configured
+      const sb = getSupabaseClient();
+      if (sb) {
+        const bucket = "avatars";
+        const path = `${friend.id}/${Date.now()}-${file.name}`.replace(/\s+/g, "_");
+
+        const up = await sb.storage.from(bucket).upload(path, file, {
+          upsert: true,
+          contentType: file.type || "image/png",
+        });
+
+        if (up.error) throw new Error(up.error.message);
+
+        const pub = sb.storage.from(bucket).getPublicUrl(path);
+        const url = pub.data.publicUrl;
+
+        const res = await fetch(`/api/friends/${friend.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ avatarUrl: url }),
+        });
+        if (!res.ok) throw new Error("Failed to update avatarUrl in DB");
+        pushToast("ok", "Avatar upload (Supabase Storage) ✅");
+      } else {
+        const dataUrl = await fileToAvatarDataUrl(file, 128, 0.82);
+        const res = await fetch(`/api/friends/${friend.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ avatarUrl: dataUrl }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(json.error ?? "Erreur avatar");
+        pushToast("ok", "Avatar mis à jour ✅");
+      }
+
+      await loadAll().catch(() => {});
     } catch (e: any) {
-      setToast({ type: "err", msg: e?.message ?? "Erreur avatar" });
+      pushToast("err", e?.message ?? "Erreur avatar");
     } finally {
       setBusy(false);
     }
   }
 
-  const derived = useMemo(() => {
-    if (!friend?.puuid) return { kpis: null, rows: [] as any[] };
-
-    const rows = matches
-      .map((m) => {
-        const info = m.raw?.info;
-        const parts = info?.participants;
-        if (!Array.isArray(parts)) return null;
-
-        const me = parts.find((x: any) => x?.puuid === friend.puuid);
-        if (!me) return null;
-
-        const teamId = me.teamId;
-        const allies = parts.filter((p: any) => p?.teamId === teamId);
-        const enemies = parts.filter((p: any) => p?.teamId !== teamId);
-
-        const date = info?.gameStartTimestamp
-          ? new Date(info.gameStartTimestamp).toLocaleString()
-          : (m.gameStartMs ? new Date(Number(m.gameStartMs)).toLocaleString() : "n/a");
-
-        const duration = typeof info?.gameDuration === "number" ? info.gameDuration : m.gameDurationS;
-        const cs = (me.totalMinionsKilled ?? 0) + (me.neutralMinionsKilled ?? 0);
-
-        const teamKills = (arr: any[]) => arr.reduce((s, p) => s + (p.kills ?? 0), 0);
-        const teamDeaths = (arr: any[]) => arr.reduce((s, p) => s + (p.deaths ?? 0), 0);
-        const allyKills = teamKills(allies);
-        const enemyKills = teamKills(enemies);
-
-        return {
-          matchId: m.matchId,
-          date,
-          duration,
-          queueId: info?.queueId ?? m.queueId ?? null,
-          win: !!me.win,
-          champ: me.championName ?? "Unknown",
-          lane: me.lane ?? "—",
-          role: me.role ?? "—",
-          k: me.kills ?? 0,
-          d: me.deaths ?? 0,
-          a: me.assists ?? 0,
-          cs,
-          vision: me.visionScore ?? null,
-          dmg: me.totalDamageDealtToChampions ?? null,
-          allyKills,
-          enemyKills,
-          allies: allies.map((p: any) => ({
-            name: displayName(p),
-            champ: p.championName ?? "—",
-            k: p.kills ?? 0,
-            d: p.deaths ?? 0,
-            a: p.assists ?? 0,
-            gold: p.goldEarned ?? null,
-            dmg: p.totalDamageDealtToChampions ?? null,
-          })),
-          enemies: enemies.map((p: any) => ({
-            name: displayName(p),
-            champ: p.championName ?? "—",
-            k: p.kills ?? 0,
-            d: p.deaths ?? 0,
-            a: p.assists ?? 0,
-            gold: p.goldEarned ?? null,
-            dmg: p.totalDamageDealtToChampions ?? null,
-          })),
-        };
-      })
-      .filter(Boolean) as any[];
-
-    const games = rows.length || 0;
-    const wins = rows.filter((r) => r.win).length;
-    const winrate = games ? Math.round((wins / games) * 100) : 0;
-
-    const avg = (key: "k" | "d" | "a") => (games ? rows.reduce((s, r) => s + r[key], 0) / games : 0);
-    const k = avg("k");
-    const d = avg("d");
-    const a = avg("a");
-    const kda = d > 0 ? (k + a) / d : (k + a);
-
-    return { kpis: { games, wins, winrate, kda }, rows };
-  }, [friend, matches]);
-
   return (
     <main className="container">
+      <ToastHost toasts={toasts} remove={removeToast} />
+
       <header className="topbar">
         <div className="brand">
-          <a className="button" href="/">←</a>
-
-          <div className="avatar">
-            {friend?.avatarUrl ? <img src={friend.avatarUrl} alt="Avatar" /> : <span>{initials(friend?.riotName ?? "Monkey")}</span>}
+          <div className="avatar" aria-hidden>
+            {friend?.avatarUrl ? <img src={friend.avatarUrl} alt="" /> : <span>{initials(friend?.riotName ?? "Monkey")}</span>}
           </div>
-
           <div>
-            <h1 className="h1" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <span>{friend ? `${friend.riotName}#${friend.riotTag}` : "Profil"}</span>
-              {friend?.puuid ? <span className="badge">PUUID OK</span> : <span className="badge">PUUID en attente</span>}
-            </h1>
-            <p className="p">Résumé + détails des games (mode, alliés/ennemis, KDA, dégâts, gold).</p>
-            {friend?.rankedSoloTier ? (
-              <p className="p" style={{ marginTop: 4 }}>
-                Ranked Solo: <b>{friend.rankedSoloTier} {friend.rankedSoloRank}</b> · <b>{friend.rankedSoloLP ?? 0} LP</b>
-                {friend.rankedSoloWins != null && friend.rankedSoloLosses != null && (
-                  <> · WR <b>{(() => { const t = (friend.rankedSoloWins ?? 0) + (friend.rankedSoloLosses ?? 0); return t ? Math.round(((friend.rankedSoloWins ?? 0) / t) * 100) : 0; })()}%</b> ({friend.rankedSoloWins}-{friend.rankedSoloLosses})</>
-                )}
-              </p>
-            ) : (
-              <p className="p" style={{ marginTop: 4 }}>Ranked Solo: <b>Unranked</b></p>
-            )}
+            <h1 className="h1">{friend ? `${friend.riotName}#${friend.riotTag}` : "Monkey"}</h1>
+            <p className="p">
+              Ranked Solo: <b>{formatRank(friend?.rankedSoloTier ?? null, friend?.rankedSoloRank ?? null, friend?.rankedSoloLP ?? null)}</b>
+              {wr != null && (
+                <> · WR <b>{wr}%</b> ({friend?.rankedSoloWins ?? 0}-{friend?.rankedSoloLosses ?? 0})</>
+              )}
+            </p>
           </div>
         </div>
 
         <div className="row">
-          <label className="button">
-            <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => updateAvatar(e.target.files?.[0] ?? null)} />
-            Changer avatar
-          </label>
-          <button className="button buttonPrimary" onClick={syncAll} disabled={busy}>
-            {busy ? "…" : "Sync tout"}
+          <a className="button" href="/">Dashboard</a>
+          <button className="button buttonPrimary" onClick={syncMe} disabled={busy}>
+            {busy ? "…" : "Sync ce monkey"}
           </button>
         </div>
       </header>
 
-      {toast && (
-        <div style={{ marginTop: 12 }} className="small">
-          <span
-            className="pill"
-            style={{
-              borderColor: toast.type === "ok" ? "rgba(52,211,153,.35)" : "rgba(251,113,133,.38)",
-              background: toast.type === "ok" ? "rgba(52,211,153,.10)" : "rgba(251,113,133,.10)",
-              color: "rgba(255,255,255,.88)",
-            }}
-          >
-            {toast.msg}
-          </span>
-        </div>
-      )}
-
-      <div style={{ marginTop: 14 }} className="grid">
+      <div className="grid cols2" style={{ marginTop: 14 }}>
         <section className="card">
-          <h2 className="cardTitle">Résumé (10 derniers matchs en DB)</h2>
+          <h2 className="cardTitle">Profil</h2>
 
-          {!friend?.puuid ? (
-            <p className="small">
-              Clique <b>Sync tout</b> pour résoudre le compte (PUUID) et récupérer les matchs.
-            </p>
-          ) : derived.kpis ? (
-            <div className="kpiGrid">
-              <div className="kpi">
-                <div className="label">Games</div>
-                <div className="value">{derived.kpis.games}</div>
-              </div>
-              <div className="kpi">
-                <div className="label">Winrate</div>
-                <div className="value">{derived.kpis.winrate}%</div>
-              </div>
-              <div className="kpi">
-                <div className="label">KDA</div>
-                <div className="value">{Number(derived.kpis.kda).toFixed(2)}</div>
-              </div>
+          <div className="row">
+            <div className="avatar" title="Avatar">
+              {friend?.avatarUrl ? <img src={friend.avatarUrl} alt="Avatar" /> : <span>{initials(friend?.riotName ?? "Monkey")}</span>}
             </div>
+
+            <label className="button" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <input type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => uploadAvatar(e.target.files?.[0] ?? null)} />
+              Changer avatar
+            </label>
+
+            <div className="spacer" />
+            <span className="badge">{friend?.region ?? "euw1"}</span>
+          </div>
+
+          <div className="hr" />
+
+          <h3 className="cardTitle" style={{ marginTop: 4 }}>Top champs (Ranked Solo)</h3>
+
+          {summary === null ? (
+            <div className="grid">
+              <Skeleton style={{ height: 52 }} />
+              <Skeleton style={{ height: 52 }} />
+            </div>
+          ) : summary.champs.length === 0 ? (
+            <p className="small">Pas assez de ranked solo en DB (sync).</p>
           ) : (
-            <p className="small">Pas de données.</p>
+            <div className="grid" style={{ gap: 10 }}>
+              {summary.champs.map((c) => (
+                <div key={c.champ} className="rowCard">
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <div>
+                      <div className="name" style={{ fontSize: 14 }}>{c.champ}</div>
+                      <div className="sub">{c.games} games · {c.wins}-{c.games - c.wins}</div>
+                    </div>
+                    <div className="badge">WR <b style={{ marginLeft: 6 }}>{c.winrate}%</b></div>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
+
+          <p className="small" style={{ marginTop: 10 }}>
+            (Optionnel) Pour uploader les avatars dans Supabase Storage : définis{" "}
+            <code>NEXT_PUBLIC_SUPABASE_URL</code> + <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> + bucket <code>avatars</code>.
+          </p>
         </section>
 
         <section className="card">
-          <h2 className="cardTitle">Games — équipes & KDA</h2>
+          <h2 className="cardTitle">Games</h2>
 
-          {loading ? (
-            <p className="small">Chargement…</p>
-          ) : derived.rows.length === 0 ? (
-            <p className="small">Aucune game stockée. Lance un sync.</p>
+          {matches === null ? (
+            <div className="grid">
+              <Skeleton style={{ height: 120 }} />
+              <Skeleton style={{ height: 120 }} />
+              <Skeleton style={{ height: 120 }} />
+            </div>
+          ) : matches.length === 0 ? (
+            <p className="small">Aucune game — clique “Sync ce monkey”.</p>
           ) : (
-            <div className="grid" style={{ marginTop: 8 }}>
-              {derived.rows.map((r: any) => (
-                <div key={r.matchId} className="match">
+            <div className="grid">
+              {matches.map((m) => (
+                <div key={m.matchId} className="matchCard">
                   <div className="matchTop">
-                    <div className={`pill ${r.win ? "win" : "lose"}`}>{r.win ? "VICTOIRE" : "DÉFAITE"}</div>
-                    <div className="pill">{queueLabel(r.queueId)}</div>
-                    <div className="pill">{r.champ}</div>
-                    <div className="pill">{fmtDuration(r.duration)}</div>
-                    <div className="pill">{r.date}</div>
-                    <div className="pill">Kills: <b style={{ marginLeft: 6 }}>{r.allyKills}-{r.enemyKills}</b></div>
+                    <div className={`pill ${m.win ? "win" : "lose"}`}>{m.win ? "VICTOIRE" : "DÉFAITE"}</div>
+                    <div className="pill">{queueLabel(m.queueId)}</div>
+                    <div className="pill">{m.champ ?? "—"}</div>
+                    <div className="pill">{fmtDur(m.gameDurationS)}</div>
+                    <div className="spacer" />
+                    <div className="pill">Team K {m.team.allyKills}-{m.team.enemyKills}</div>
+                    <div className="pill">Gold {m.team.allyGold}-{m.team.enemyGold}</div>
+                    <div className="pill">DMG {m.team.allyDmg}-{m.team.enemyDmg}</div>
                   </div>
 
-                  <div className="row" style={{ gap: 10 }}>
-                    <span className="pill">Ton KDA: <b style={{ marginLeft: 6 }}>{r.k}/{r.d}/{r.a}</b></span>
-                    <span className="pill">CS: <b style={{ marginLeft: 6 }}>{r.cs}</b></span>
-                    {r.vision != null && <span className="pill">Vision: <b style={{ marginLeft: 6 }}>{r.vision}</b></span>}
-                    {r.dmg != null && <span className="pill">DMG: <b style={{ marginLeft: 6 }}>{r.dmg}</b></span>}
-                    <span className="pill">{r.lane}{r.role && r.role !== "—" ? ` · ${r.role}` : ""}</span>
-                  </div>
+                  <div className="matchBody">
+                    <div className="sub" style={{ marginBottom: 10 }}>
+                      {fmtWhen(m.gameStartMs)} · KDA <b>{m.k ?? 0}/{m.d ?? 0}/{m.a ?? 0}</b>
+                      {m.dmg != null && <> · DMG <b>{m.dmg}</b></>}
+                      {m.gold != null && <> · Gold <b>{m.gold}</b></>}
+                      {m.cs != null && <> · CS <b>{m.cs}</b></>}
+                      {m.vision != null && <> · Vision <b>{m.vision}</b></>}
+                    </div>
 
-                  <div className="hr" />
+                    <div className="grid cols2">
+                      <div>
+                        <div className="sub" style={{ marginBottom: 8 }}><b>Alliés</b></div>
+                        <div className="grid" style={{ gap: 8 }}>
+                          {m.allies.map((p) => (
+                            <div key={p.puuid} className="rowCard">
+                              <div className="row" style={{ justifyContent: "space-between" }}>
+                                <div style={{ minWidth: 220 }}>
+                                  <div className="name" style={{ fontSize: 13 }}>{p.name}</div>
+                                  <div className="sub">{p.champ ?? "—"} · {p.lane ?? "—"} · {p.role ?? "—"}</div>
+                                </div>
+                                <div className="row" style={{ justifyContent: "flex-end" }}>
+                                  <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k ?? 0}/{p.d ?? 0}/{p.a ?? 0}</b></span>
+                                  {p.dmg != null && <span className="pill">DMG <b style={{ marginLeft: 6 }}>{p.dmg}</b></span>}
+                                  {p.gold != null && <span className="pill">Gold <b style={{ marginLeft: 6 }}>{p.gold}</b></span>}
+                                  <span className="pill">CS <b style={{ marginLeft: 6 }}>{p.cs}</b></span>
+                                  {p.vision != null && <span className="pill">V <b style={{ marginLeft: 6 }}>{p.vision}</b></span>}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
 
-                  <div className="grid" style={{ gap: 10 }}>
-                    <div>
-                      <div className="small" style={{ marginBottom: 6, opacity: 0.9 }}>Alliés</div>
-                      <div className="grid" style={{ gap: 8 }}>
-                        {r.allies.map((p: any, idx: number) => (
-                          <div key={idx} className="row" style={{ justifyContent: "space-between" }}>
-                            <span className="pill">{p.champ}</span>
-                            <span className="small" style={{ flex: 1, marginLeft: 10 }}>{p.name}</span>
-                            <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k}/{p.d}/{p.a}</b></span>
-                            {p.dmg != null && <span className="pill">DMG <b style={{ marginLeft: 6 }}>{p.dmg}</b></span>}
-                            {p.gold != null && <span className="pill">Gold <b style={{ marginLeft: 6 }}>{p.gold}</b></span>}
-                          </div>
-                        ))}
+                      <div>
+                        <div className="sub" style={{ marginBottom: 8 }}><b>Ennemis</b></div>
+                        <div className="grid" style={{ gap: 8 }}>
+                          {m.enemies.map((p) => (
+                            <div key={p.puuid} className="rowCard">
+                              <div className="row" style={{ justifyContent: "space-between" }}>
+                                <div style={{ minWidth: 220 }}>
+                                  <div className="name" style={{ fontSize: 13 }}>{p.name}</div>
+                                  <div className="sub">{p.champ ?? "—"} · {p.lane ?? "—"} · {p.role ?? "—"}</div>
+                                </div>
+                                <div className="row" style={{ justifyContent: "flex-end" }}>
+                                  <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k ?? 0}/{p.d ?? 0}/{p.a ?? 0}</b></span>
+                                  {p.dmg != null && <span className="pill">DMG <b style={{ marginLeft: 6 }}>{p.dmg}</b></span>}
+                                  {p.gold != null && <span className="pill">Gold <b style={{ marginLeft: 6 }}>{p.gold}</b></span>}
+                                  <span className="pill">CS <b style={{ marginLeft: 6 }}>{p.cs}</b></span>
+                                  {p.vision != null && <span className="pill">V <b style={{ marginLeft: 6 }}>{p.vision}</b></span>}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
 
-                    <div>
-                      <div className="small" style={{ marginBottom: 6, opacity: 0.9 }}>Ennemis</div>
-                      <div className="grid" style={{ gap: 8 }}>
-                        {r.enemies.map((p: any, idx: number) => (
-                          <div key={idx} className="row" style={{ justifyContent: "space-between" }}>
-                            <span className="pill">{p.champ}</span>
-                            <span className="small" style={{ flex: 1, marginLeft: 10 }}>{p.name}</span>
-                            <span className="pill">KDA <b style={{ marginLeft: 6 }}>{p.k}/{p.d}/{p.a}</b></span>
-                            {p.dmg != null && <span className="pill">DMG <b style={{ marginLeft: 6 }}>{p.dmg}</b></span>}
-                            {p.gold != null && <span className="pill">Gold <b style={{ marginLeft: 6 }}>{p.gold}</b></span>}
-                          </div>
-                        ))}
-                      </div>
+                    <div className="row" style={{ marginTop: 12, justifyContent: "flex-end" }}>
+                      <a className="button" href={`/match/${m.matchId}`}>Voir match</a>
                     </div>
                   </div>
-
                 </div>
               ))}
             </div>
           )}
         </section>
       </div>
-
-      <p className="small" style={{ marginTop: 14 }}>
-        Anti-quota : on lisse les appels (délai minimum) et en cas de 429 on attend automatiquement (Retry-After).
-      </p>
     </main>
   );
 }

@@ -93,3 +93,90 @@ code{color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);padding:.1rem .
 
 
 .playerRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+
+
+/* --- Toasts --- */
+.toastWrap{
+  position:fixed;left:0;right:0;bottom:18px;
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+  z-index:50;pointer-events:none;padding:0 12px;
+}
+.toast{
+  pointer-events:auto;
+  width:min(720px, 100%);
+  display:flex;align-items:center;gap:10px;
+  padding:10px 12px;border-radius:14px;
+  border:1px solid var(--border);
+  background:rgba(17,19,24,.92);
+  box-shadow:var(--shadow);
+  backdrop-filter:blur(10px);
+}
+.toastDot{width:10px;height:10px;border-radius:999px;background:var(--accent)}
+.toast.ok .toastDot{background:var(--success)}
+.toast.err .toastDot{background:var(--danger)}
+.toast.info .toastDot{background:var(--accent2)}
+.toastMsg{flex:1;color:rgba(255,255,255,.9);font-size:14px}
+.toastX{
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.03);
+  color:rgba(255,255,255,.75);
+  border-radius:10px;
+  padding:6px 8px;
+}
+.toastX:hover{border-color:rgba(255,255,255,.18)}
+
+/* --- Skeleton --- */
+.skeleton{
+  border-radius:14px;
+  border:1px solid var(--border);
+  background:linear-gradient(90deg, rgba(255,255,255,.04), rgba(255,255,255,.08), rgba(255,255,255,.04));
+  background-size:200% 100%;
+  animation:shimmer 1.2s infinite linear;
+}
+@keyframes shimmer{0%{background-position:0% 0}100%{background-position:200% 0}}
+
+/* --- Tables / Rows --- */
+.table{
+  width:100%;
+  border-collapse:separate;
+  border-spacing:0 8px;
+}
+.tr{
+  background:rgba(255,255,255,.03);
+  border:1px solid var(--border);
+}
+.td, .th{
+  padding:10px 10px;
+  font-size:13px;
+  color:rgba(255,255,255,.86);
+}
+.th{
+  color:rgba(255,255,255,.65);
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.3px;
+}
+.rowCard{
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.03);
+  border-radius:14px;
+  padding:10px 12px;
+}
+.kpiGrid{display:grid;gap:12px}
+@media(min-width:900px){.kpiGrid{grid-template-columns:repeat(3,1fr)}}
+.kpi{
+  border:1px solid var(--border);
+  background:rgba(255,255,255,.03);
+  border-radius:14px;
+  padding:12px;
+}
+.kpi .label{font-size:12px;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.35px}
+.kpi .value{font-size:22px;margin-top:6px}
+
+.navlinks{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.smallLink{color:rgba(255,255,255,.75);font-size:13px;text-decoration:underline;text-decoration-color:rgba(255,255,255,.2)}
+.smallLink:hover{text-decoration-color:rgba(255,255,255,.5)}
+
+/* aliases */
+.matchCard{border:1px solid var(--border);border-radius:14px;padding:12px;background:rgba(0,0,0,.18)}
+.matchBody{margin-top:10px}

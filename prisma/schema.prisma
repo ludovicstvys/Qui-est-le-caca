@@ -30,6 +30,9 @@ model Friend {
   rankFetchedAt DateTime?
 region    String   @default("euw1")
   avatarUrl String?
+  lastMatchId String?
+  lastSyncAt  DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -49,6 +52,9 @@ model Match {
   updatedAt     DateTime @updatedAt
 
   friends       FriendMatch[]
+  participants  MatchParticipant[]
+
+  @@index([fetchedAt])
 }
 
 model FriendMatch {
@@ -61,4 +67,63 @@ model FriendMatch {
 
   @@id([friendId, matchId])
   @@index([matchId])
+  @@index([friendId, addedAt])
+}
+
+
+model MatchParticipant {
+  matchId String
+  puuid   String
+
+  teamId Int?
+  win    Boolean?
+
+  summonerName   String?
+  riotIdGameName String?
+  riotIdTagline  String?
+
+  championName String?
+  lane         String?
+  role         String?
+
+  kills   Int?
+  deaths  Int?
+  assists Int?
+
+  goldEarned Int?
+  totalDamageDealtToChampions Int?
+  visionScore Int?
+  totalMinionsKilled Int?
+  neutralMinionsKilled Int?
+
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@id([matchId, puuid])
+  @@index([puuid])
+  @@index([matchId, teamId])
+}
+
+model RankSnapshot {
+  id       String   @id @default(cuid())
+  friendId String
+  queueType String
+
+  tier   String?
+  rank   String?
+  lp     Int?
+  wins   Int?
+  losses Int?
+
+  createdAt DateTime @default(now())
+
+  friend Friend @relation(fields: [friendId], references: [id], onDelete: Cascade)
+
+  @@index([friendId, createdAt])
+  @@index([queueType, createdAt])
+}
+
+model SyncLock {
+  id          Int      @id
+  lockedUntil DateTime?
+  updatedAt   DateTime @updatedAt
 }
