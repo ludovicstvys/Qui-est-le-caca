@@ -130,6 +130,15 @@ Ensuite : redeploy Vercel → clique **Sync tout**.
 
 ---
 
+## Backfill (charger tous les matchs depuis 2026)
+- Sur le dashboard : bouton **Backfill 2026**
+- Sur la page d’un monkey : bouton **Backfill 2026**
+
+Techniquement : ça appelle `/api/sync?from=2026-01-01&max=250` (ou `/api/friends/:id/sync?...`).
+
+
+---
+
 ## Sync auto (Cron)
 Le repo contient `vercel.json` :
 

@@ -219,11 +219,57 @@ async function upsertParticipants(matchId: string, raw: any) {
   }
 }
 
-export async function syncFriendMatches(friendId: string, count = 10) {
+export async function syncFriendMatches(
+  friendId: string,
+  countOrOpts: number | { count?: number; from?: string; max?: number } = 10
+) {
   const prisma = getPrisma();
 
+  const opts =
+    typeof countOrOpts === "number"
+      ? { count: countOrOpts }
+      : { count: countOrOpts.count ?? 10, from: countOrOpts.from, max: countOrOpts.max };
+
   const puuid = await ensureFriendPuuid(friendId);
-  const matchIds = await getMatchIdsByPuuid(puuid, count);
+
+  // Backfill mode (load all matches since a date), with safety max to avoid timeouts.
+  const from = opts.from?.trim();
+  const max = Number.isFinite(Number(opts.max)) ? Math.max(1, Math.min(Number(opts.max), 800)) : 180;
+
+  let matchIds: string[] = [];
+
+  if (from) {
+    const fromDate = new Date(`${from}T00:00:00Z`);
+    if (!Number.isFinite(fromDate.getTime())) {
+      throw new Error("Invalid 'from' date. Use YYYY-MM-DD.");
+    }
+
+    const startTime = Math.floor(fromDate.getTime() / 1000); // seconds
+    const pageSize = 100;
+
+    let start = 0;
+    while (matchIds.length < max) {
+      const left = max - matchIds.length;
+      const page = await getMatchIdsByPuuid(puuid, {
+        start,
+        count: Math.min(pageSize, left),
+        startTime,
+      });
+
+      if (!Array.isArray(page) || page.length === 0) break;
+
+      matchIds.push(...page);
+      start += page.length;
+
+      if (page.length < Math.min(pageSize, left)) break;
+    }
+
+    // De-dupe (just in case)
+    matchIds = Array.from(new Set(matchIds));
+  } else {
+    const count = Number.isFinite(Number(opts.count)) ? Math.max(1, Math.min(Number(opts.count), 50)) : 10;
+    matchIds = await getMatchIdsByPuuid(puuid, count);
+  }
 
   // 1) FK requires Match rows to exist before FriendMatch rows.
   // IMPORTANT: set fetchedAt to epoch so placeholders are considered stale and will be filled immediately.
@@ -271,6 +317,22 @@ export async function syncFriendMatches(friendId: string, count = 10) {
       });
 
       await upsertParticipants(matchId, raw);
+    } else {
+      // If match was fetched in older versions but participants table is empty,
+      // rebuild participants from existing rawJson WITHOUT calling Riot again.
+      const pcount = await prisma.matchParticipant.count({ where: { matchId } });
+      if (pcount < 10) {
+        if (existing && hasMatchPayload(existing.rawJson)) {
+          await upsertParticipants(matchId, existing.rawJson);
+        } else {
+          const raw = await getMatchById(matchId);
+          await prisma.match.update({
+            where: { id: matchId },
+            data: { rawJson: raw, fetchedAt: new Date() },
+          });
+          await upsertParticipants(matchId, raw);
+        }
+      }
     }
 
     if (fetchTimeline) {

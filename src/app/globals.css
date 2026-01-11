@@ -4,8 +4,10 @@
   --accent:#8b5cf6;--accent2:#22d3ee;--success:#34d399;--danger:#fb7185;
   --shadow:0 12px 30px rgba(0,0,0,.45);--radius:16px;
 }
-*{box-sizing:border-box}html,body{height:100%}
+*{box-sizing:border-box}html,body{
+  overflow-x:hidden;height:100%}
 body{
+  overflow-x:hidden;
   margin:0;color:var(--text);
   background:
     radial-gradient(900px 450px at 10% -10%, rgba(139,92,246,.35), transparent 60%),
@@ -180,3 +182,26 @@ code{color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);padding:.1rem .
 /* aliases */
 .matchCard{border:1px solid var(--border);border-radius:14px;padding:12px;background:rgba(0,0,0,.18)}
 .matchBody{margin-top:10px}
+
+
+/* --- Collapsible match cards --- */
+.matchHeader{
+  width:100%;
+  text-align:left;
+  border:0;
+  padding:0;
+  background:transparent;
+  color:inherit;
+  cursor:pointer;
+}
+.matchHeader:focus{outline:2px solid rgba(139,92,246,.45);outline-offset:4px;border-radius:14px}
+.matchMeta{
+  display:flex;gap:10px;flex-wrap:wrap;
+  padding:8px 2px 0;
+}
+.pill.warn{
+  border-color:rgba(245,158,11,.45);
+  color:rgba(245,158,11,.95);
+  background:rgba(245,158,11,.08);
+}
+.min0{min-width:0}

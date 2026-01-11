@@ -153,6 +153,17 @@ export default function HomePage() {
     setBusy(false);
   }
 
+  async function backfillAll2026() {
+    setBusy(true);
+    pushToast("info", "Backfill global depuis 2026… (peut être long / quota Riot)");
+    const res = await fetch(`/api/sync?from=2026-01-01&max=250`, { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) pushToast("err", json.error ?? "Erreur backfill global");
+    else pushToast("ok", `Backfill OK ✅ (${json.okCount}/${json.total})`);
+    await loadOverview().catch(() => {});
+    setBusy(false);
+  }
+
   const filtered = useMemo(() => {
     const list = friends ?? [];
     const qq = q.trim().toLowerCase();
@@ -211,6 +222,9 @@ export default function HomePage() {
           </div>
           <button className="button buttonPrimary" onClick={syncAll} disabled={busy || (friends?.length ?? 0) === 0}>
             {busy ? "…" : "Sync tout"}
+          </button>
+          <button className="button" onClick={backfillAll2026} disabled={busy || (friends?.length ?? 0) === 0}>
+            {busy ? "…" : "Backfill 2026"}
           </button>
           <span className="badge">Next.js · Prisma · PostgreSQL</span>
         </div>

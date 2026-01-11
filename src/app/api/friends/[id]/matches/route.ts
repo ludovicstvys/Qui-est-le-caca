@@ -17,12 +17,41 @@ function cs(p: any) {
   return a + b;
 }
 
+function normalizeParticipantsFromRaw(raw: any) {
+  const arr = raw?.info?.participants;
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .map((p: any) => ({
+      matchId: raw?.metadata?.matchId ?? null,
+      puuid: typeof p?.puuid === "string" ? p.puuid : null,
+      teamId: typeof p?.teamId === "number" ? p.teamId : null,
+      win: typeof p?.win === "boolean" ? p.win : null,
+      summonerName: typeof p?.summonerName === "string" ? p.summonerName : null,
+      riotIdGameName: typeof p?.riotIdGameName === "string" ? p.riotIdGameName : null,
+      riotIdTagline: typeof p?.riotIdTagline === "string" ? p.riotIdTagline : null,
+      championName: typeof p?.championName === "string" ? p.championName : null,
+      lane: typeof p?.lane === "string" ? p.lane : null,
+      role: typeof p?.role === "string" ? p.role : null,
+      kills: typeof p?.kills === "number" ? p.kills : null,
+      deaths: typeof p?.deaths === "number" ? p.deaths : null,
+      assists: typeof p?.assists === "number" ? p.assists : null,
+      goldEarned: typeof p?.goldEarned === "number" ? p.goldEarned : null,
+      totalDamageDealtToChampions:
+        typeof p?.totalDamageDealtToChampions === "number" ? p.totalDamageDealtToChampions : null,
+      visionScore: typeof p?.visionScore === "number" ? p.visionScore : null,
+      totalMinionsKilled: typeof p?.totalMinionsKilled === "number" ? p.totalMinionsKilled : 0,
+      neutralMinionsKilled: typeof p?.neutralMinionsKilled === "number" ? p.neutralMinionsKilled : 0,
+    }))
+    .filter((p: any) => p.puuid);
+}
+
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   const prisma = getPrisma();
   const url = new URL(req.url);
 
   const includeTimeline = url.searchParams.get("includeTimeline") === "1";
-  const take = Math.max(1, Math.min(Number(url.searchParams.get("take") || 10), 30));
+  const take = Math.max(1, Math.min(Number(url.searchParams.get("take") || 30), 200));
+  const from = url.searchParams.get("from") || null;
 
   const friend = await prisma.friend.findUnique({ where: { id: params.id } });
   if (!friend) return NextResponse.json({ error: "Friend not found" }, { status: 404 });
@@ -34,16 +63,25 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     take,
   });
 
-  const payload = rows
+  
+  const fromMs = from ? new Date(`${from}T00:00:00Z`).getTime() : null;
+const payload = rows
     .filter((r) => r.match)
     .map((r) => {
       const m = r.match!;
-      const parts = m.participants || [];
+
+      // Prefer denormalized table; fallback to rawJson if old DB or missing participants
+      let parts: any[] = Array.isArray(m.participants) ? m.participants : [];
+      if (parts.length < 10) {
+        const fromRaw = normalizeParticipantsFromRaw(m.rawJson);
+        if (fromRaw.length >= parts.length) parts = fromRaw;
+      }
+
       const me = friend.puuid ? parts.find((p) => p.puuid === friend.puuid) : null;
 
       const teamId = me?.teamId ?? null;
       const allies = teamId != null ? parts.filter((p) => p.teamId === teamId) : [];
-      const enemies = teamId != null ? parts.filter((p) => p.teamId !== teamId) : [];
+      const enemies = teamId != null ? parts.filter((p) => p.teamId != null && p.teamId !== teamId) : [];
 
       const sum = (arr: any[], key: string) =>
         arr.reduce((s, p) => s + (typeof (p as any)[key] === "number" ? (p as any)[key] : 0), 0);
@@ -107,8 +145,11 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
           gold: p.goldEarned ?? null,
           puuid: p.puuid,
         })),
+        // Keep raw for debugging / future enrich (but don't rely on it for UI)
         raw: m.rawJson,
         timeline: includeTimeline ? m.timelineJson : undefined,
+        // for UI collapse
+        participantCount: parts.length,
       };
     });
 

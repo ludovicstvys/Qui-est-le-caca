@@ -10,11 +10,20 @@ export async function POST(req: Request) {
   return withGlobalSyncLock(async () => {
     const prisma = getPrisma();
     const url = new URL(req.url);
+
     const count = Number(url.searchParams.get("count") || 10);
+    const from = url.searchParams.get("from") || undefined;
+    const max = url.searchParams.get("max") ? Number(url.searchParams.get("max")) : undefined;
 
     const friends = await prisma.friend.findMany({ orderBy: { createdAt: "asc" } });
 
-    const results: Array<{ friendId: string; riot: string; ok: boolean; error?: string; syncedMatches?: number }> = [];
+    const results: Array<{
+      friendId: string;
+      riot: string;
+      ok: boolean;
+      error?: string;
+      syncedMatches?: number;
+    }> = [];
 
     const safeCount = Number.isFinite(count) ? Math.max(1, Math.min(count, 50)) : 10;
 
@@ -22,8 +31,13 @@ export async function POST(req: Request) {
     for (const f of friends) {
       try {
         await syncFriendRank(f.id);
-        const r = await syncFriendMatches(f.id, safeCount);
-        results.push({ friendId: f.id, riot: `${f.riotName}#${f.riotTag}`, ok: true, syncedMatches: r.matchIds.length });
+        const r = await syncFriendMatches(f.id, from ? { from, max } : safeCount);
+        results.push({
+          friendId: f.id,
+          riot: `${f.riotName}#${f.riotTag}`,
+          ok: true,
+          syncedMatches: r.matchIds.length,
+        });
       } catch (e: any) {
         results.push({
           friendId: f.id,
@@ -35,6 +49,15 @@ export async function POST(req: Request) {
     }
 
     const okCount = results.filter((r) => r.ok).length;
-    return NextResponse.json({ ok: true, total: results.length, okCount, results, count: safeCount });
+    return NextResponse.json({
+      ok: true,
+      total: results.length,
+      okCount,
+      results,
+      mode: from ? "backfill" : "latest",
+      from: from ?? null,
+      max: max ?? null,
+      count: safeCount,
+    });
   });
 }

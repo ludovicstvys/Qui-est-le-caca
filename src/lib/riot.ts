@@ -95,10 +95,24 @@ export async function getAccountByRiotId(gameName: string, tagLine: string) {
 }
 
 // Match-v5 (regional routing)
-export async function getMatchIdsByPuuid(puuid: string, count = 10) {
+export async function getMatchIdsByPuuid(
+  puuid: string,
+  countOrOpts: number | { start?: number; count?: number; startTime?: number; endTime?: number } = 10
+) {
+  const opts =
+    typeof countOrOpts === "number"
+      ? { start: 0, count: countOrOpts }
+      : { start: countOrOpts.start ?? 0, count: countOrOpts.count ?? 10, startTime: countOrOpts.startTime, endTime: countOrOpts.endTime };
+
+  const params = new URLSearchParams();
+  params.set("start", String(opts.start ?? 0));
+  params.set("count", String(Math.max(1, Math.min(opts.count ?? 10, 100))));
+  if (typeof opts.startTime === "number") params.set("startTime", String(Math.floor(opts.startTime)));
+  if (typeof opts.endTime === "number") params.set("endTime", String(Math.floor(opts.endTime)));
+
   const url = `https://${RIOT_ROUTING}.api.riotgames.com/lol/match/v5/matches/by-puuid/${encodeURIComponent(
     puuid
-  )}/ids?start=0&count=${count}`;
+  )}/ids?${params.toString()}`;
   return riotFetch<string[]>(url);
 }
 
