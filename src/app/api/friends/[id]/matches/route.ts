@@ -59,7 +59,8 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   const rows = await prisma.friendMatch.findMany({
     where: { friendId: params.id },
     include: { match: { include: { participants: true } } },
-    orderBy: { addedAt: "desc" },
+    // Display games by real in-game date (not insertion date).
+    orderBy: [{ match: { gameStartMs: "desc" } }, { addedAt: "desc" }],
     take,
   });
 

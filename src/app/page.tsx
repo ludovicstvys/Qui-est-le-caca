@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { fileToAvatarDataUrl } from "@/lib/avatar";
-import { formatRank, winrate } from "@/lib/rank";
+import { formatRank, winrate, bestRankScore } from "@/lib/rank";
 import { queueLabel } from "@/lib/queues";
 import { Skeleton } from "@/components/Skeleton";
 import { ToastHost, Toast } from "@/components/ToastHost";
@@ -22,6 +21,12 @@ type OverviewFriend = {
   rankedSoloLP?: number | null;
   rankedSoloWins?: number | null;
   rankedSoloLosses?: number | null;
+
+  rankedFlexTier?: string | null;
+  rankedFlexRank?: string | null;
+  rankedFlexLP?: number | null;
+  rankedFlexWins?: number | null;
+  rankedFlexLosses?: number | null;
 
   lastGame?: {
     matchId: string;
@@ -67,11 +72,6 @@ export default function HomePage() {
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<"lp" | "wr" | "last" | "name">("lp");
 
-  // Add friend form
-  const [riotName, setRiotName] = useState("");
-  const [riotTag, setRiotTag] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   function pushToast(type: Toast["type"], msg: string) {
@@ -81,10 +81,9 @@ export default function HomePage() {
     setToasts((t) => t.filter((x) => x.id !== id));
   }
 
-  const canSubmit = useMemo(
-    () => riotName.trim().length > 0 && riotTag.trim().length > 0,
-    [riotName, riotTag]
-  );
+  const wrOf = (f: OverviewFriend) =>
+    winrate(f.rankedSoloWins ?? null, f.rankedSoloLosses ?? null) ??
+    winrate(f.rankedFlexWins ?? null, f.rankedFlexLosses ?? null);
 
   async function loadOverview() {
     const res = await fetch("/api/overview", { cache: "no-store" });
@@ -98,49 +97,7 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function onPickAvatar(file?: File | null) {
-    if (!file) return;
-    try {
-      const dataUrl = await fileToAvatarDataUrl(file, 128, 0.82);
-      if (dataUrl.length > 180_000) {
-        pushToast("err", "Avatar trop lourd après compression. Essaie une autre image.");
-        return;
-      }
-      setAvatarUrl(dataUrl);
-      pushToast("ok", "Avatar prêt ✅");
-    } catch (e: any) {
-      pushToast("err", e?.message ?? "Erreur avatar");
-    }
-  }
 
-  async function addFriend() {
-    if (!canSubmit) return;
-    setBusy(true);
-
-    const res = await fetch("/api/friends", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        riotName: riotName.trim(),
-        riotTag: riotTag.trim(),
-        avatarUrl,
-      }),
-    });
-
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      pushToast("err", json.error ?? "Erreur add friend");
-      setBusy(false);
-      return;
-    }
-
-    setRiotName("");
-    setRiotTag("");
-    setAvatarUrl(null);
-    pushToast("ok", "Monkey ajouté ✨");
-    await loadOverview().catch(() => {});
-    setBusy(false);
-  }
 
   async function syncAll() {
     setBusy(true);
@@ -180,19 +137,17 @@ export default function HomePage() {
         return bb - aa;
       }
       if (sort === "wr") {
-        const aw = winrate(a.rankedSoloWins ?? null, a.rankedSoloLosses ?? null) ?? -1;
-        const bw = winrate(b.rankedSoloWins ?? null, b.rankedSoloLosses ?? null) ?? -1;
+        const aw = wrOf(a) ?? -1;
+        const bw = wrOf(b) ?? -1;
         if (bw !== aw) return bw - aw;
-        const alp = a.rankedSoloLP ?? -1;
-        const blp = b.rankedSoloLP ?? -1;
-        return blp - alp;
+        return bestRankScore(b) - bestRankScore(a);
       }
       // lp
-      const alp = a.rankedSoloLP ?? -1;
-      const blp = b.rankedSoloLP ?? -1;
-      if (blp !== alp) return blp - alp;
-      const aw = winrate(a.rankedSoloWins ?? null, a.rankedSoloLosses ?? null) ?? -1;
-      const bw = winrate(b.rankedSoloWins ?? null, b.rankedSoloLosses ?? null) ?? -1;
+      const as = bestRankScore(a);
+      const bs = bestRankScore(b);
+      if (bs !== as) return bs - as;
+      const aw = wrOf(a) ?? -1;
+      const bw = wrOf(b) ?? -1;
       return bw - aw;
     };
 
@@ -232,61 +187,21 @@ export default function HomePage() {
 
       <div style={{ marginTop: 14 }} className="grid cols2">
         <section className="card">
-          <h2 className="cardTitle">Ajouter un monkey</h2>
+          <h2 className="cardTitle">Actions</h2>
 
-          <div className="row">
-            <div className="avatar" title="Aperçu avatar">
-              {avatarUrl ? <img src={avatarUrl} alt="Avatar" /> : <span>{initials(riotName || "Monkey")}</span>}
+          <div className="grid" style={{ gap: 10 }}>
+            <a className="button buttonPrimary" href="/add">
+              + Ajouter un monkey
+            </a>
+
+            <div className="rowCard">
+              <div className="name" style={{ fontSize: 14 }}>Conseils</div>
+              <div className="sub" style={{ marginTop: 4 }}>
+                • Anti-quota Riot : délai min + retry automatique (429 Retry-After).<br />
+                • Le sync global récupère rank + derniers matchs (données complètes + participants).
+              </div>
             </div>
-
-            <div className="spacer" />
-
-            <label className="button" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="file"
-                accept="image/*"
-                style={{ display: "none" }}
-                onChange={(e) => onPickAvatar(e.target.files?.[0] ?? null)}
-              />
-              Importer avatar
-            </label>
-
-            {avatarUrl && (
-              <button className="button buttonDanger" onClick={() => setAvatarUrl(null)} disabled={busy}>
-                Retirer
-              </button>
-            )}
           </div>
-
-          <div className="hr" />
-
-          <div className="row">
-            <input
-              className="input"
-              placeholder="gameName (ex: MyMonkey)"
-              value={riotName}
-              onChange={(e) => setRiotName(e.target.value)}
-            />
-            <input
-              className="input"
-              placeholder="tagLine (ex: EUW)"
-              value={riotTag}
-              onChange={(e) => setRiotTag(e.target.value)}
-            />
-          </div>
-
-          <div className="row" style={{ marginTop: 10 }}>
-            <button className="button buttonPrimary" disabled={!canSubmit || busy} onClick={addFriend}>
-              {busy ? "…" : "Ajouter"}
-            </button>
-            <span className="small">
-              Le sync global récupère rank + 10 derniers matchs (données complètes + participants).
-            </span>
-          </div>
-
-          <p className="small" style={{ marginTop: 10 }}>
-            Anti-quota Riot : délai min + retry automatique (429 Retry-After).
-          </p>
         </section>
 
         <section className="card">
@@ -310,33 +225,46 @@ export default function HomePage() {
               <Skeleton style={{ height: 72 }} />
             </div>
           ) : friends.length === 0 ? (
-            <p className="small" style={{ marginTop: 10 }}>Aucun monkey. Ajoute-en un à gauche 👈</p>
+            <p className="small" style={{ marginTop: 10 }}>
+              Aucun monkey. <a className="smallLink" href="/add">Ajoute-en un ici</a>.
+            </p>
           ) : (
             <div className="grid" style={{ marginTop: 10 }}>
               {filtered.map((f) => {
-                const wr = winrate(f.rankedSoloWins ?? null, f.rankedSoloLosses ?? null);
+                const soloGames = (f.rankedSoloWins ?? 0) + (f.rankedSoloLosses ?? 0);
+                const flexGames = (f.rankedFlexWins ?? 0) + (f.rankedFlexLosses ?? 0);
+                const wrSolo = winrate(f.rankedSoloWins ?? null, f.rankedSoloLosses ?? null);
+                const wrFlex = winrate(f.rankedFlexWins ?? null, f.rankedFlexLosses ?? null);
+                const useSoloWr = soloGames > 0 || (soloGames === 0 && flexGames === 0);
+                const wr = useSoloWr ? wrSolo : wrFlex;
+                const wrLabel = useSoloWr ? "Solo" : "Flex";
+                const wins = useSoloWr ? (f.rankedSoloWins ?? 0) : (f.rankedFlexWins ?? 0);
+                const losses = useSoloWr ? (f.rankedSoloLosses ?? 0) : (f.rankedFlexLosses ?? 0);
                 return (
                   <div key={f.id} className="friendCard">
                     <div className="avatar">
                       {f.avatarUrl ? <img src={f.avatarUrl} alt={`${f.riotName} avatar`} /> : <span>{initials(f.riotName)}</span>}
                     </div>
 
-                    <div style={{ minWidth: 220 }}>
+                    <div className="friendCardSection">
                       <div className="name">{f.riotName}#{f.riotTag}</div>
                       <div className="sub" style={{ marginTop: 2 }}>
                         Solo: <b>{formatRank(f.rankedSoloTier ?? null, f.rankedSoloRank ?? null, f.rankedSoloLP ?? null)}</b>
-                        {wr != null && (
-                          <> · WR <b>{wr}%</b> ({f.rankedSoloWins ?? 0}-{f.rankedSoloLosses ?? 0})</>
-                        )}
                       </div>
+                      <div className="sub" style={{ marginTop: 2 }}>
+                        Flex: <b>{formatRank(f.rankedFlexTier ?? null, f.rankedFlexRank ?? null, f.rankedFlexLP ?? null)}</b>
+                      </div>
+                      {wr != null && (
+                        <div className="sub" style={{ marginTop: 2 }}>
+                          WR Ranked ({wrLabel}): <b>{wr}%</b> ({wins}-{losses})
+                        </div>
+                      )}
                       <div className="sub" style={{ marginTop: 4 }}>
                         Dernière sync: <b>{fmtAgo(f.lastSyncAt ?? null)}</b>
                       </div>
                     </div>
 
-                    <div className="spacer" />
-
-                    <div style={{ minWidth: 320 }}>
+                    <div className="friendCardSection">
                       {f.lastGame ? (
                         <div className="sub">
                           <b>{queueLabel(f.lastGame.queueId)}</b> · {f.lastGame.champ ?? "—"} · {f.lastGame.win ? "W" : "L"} ·{" "}

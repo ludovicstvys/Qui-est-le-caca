@@ -19,7 +19,8 @@ export async function GET() {
     include: {
       matches: {
         take: 1,
-        orderBy: { addedAt: "desc" },
+        // Latest by real in-game timestamp (not insertion date).
+        orderBy: [{ match: { gameStartMs: "desc" } }, { addedAt: "desc" }],
         include: { match: { include: { participants: true } } },
       },
     },

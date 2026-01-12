@@ -23,6 +23,12 @@ type Friend = {
   rankedSoloLP?: number | null;
   rankedSoloWins?: number | null;
   rankedSoloLosses?: number | null;
+
+  rankedFlexTier?: string | null;
+  rankedFlexRank?: string | null;
+  rankedFlexLP?: number | null;
+  rankedFlexWins?: number | null;
+  rankedFlexLosses?: number | null;
 };
 
 type Player = {
@@ -144,6 +150,44 @@ export default function FriendPage({ params }: { params: { id: string } }) {
     [friend]
   );
 
+  const wrFlex = useMemo(
+    () => winrate(friend?.rankedFlexWins ?? null, friend?.rankedFlexLosses ?? null),
+    [friend]
+  );
+
+  const groupedByDay = useMemo(() => {
+    const arr = Array.isArray(matches) ? matches : [];
+    const sorted = [...arr].sort((a, b) => {
+      const aa = a.gameStartMs ? Number(a.gameStartMs) : 0;
+      const bb = b.gameStartMs ? Number(b.gameStartMs) : 0;
+      return bb - aa;
+    });
+
+    const groups = new Map<string, MatchRow[]>();
+    for (const m of sorted) {
+      const ms = m.gameStartMs ? Number(m.gameStartMs) : 0;
+      const d = ms ? new Date(ms) : null;
+      const key = d ? d.toISOString().slice(0, 10) : "unknown";
+      const bucket = groups.get(key) ?? [];
+      bucket.push(m);
+      groups.set(key, bucket);
+    }
+
+    const out = [...groups.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+    return out.map(([key, items]) => {
+      const label =
+        key === "unknown"
+          ? "Date inconnue"
+          : new Date(`${key}T00:00:00Z`).toLocaleDateString(undefined, {
+              weekday: "short",
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            });
+      return { key, label, items };
+    });
+  }, [matches]);
+
   async function syncLatest() {
     setBusy(true);
     pushToast("info", "Sync du monkey… (rank + derniers matchs)");
@@ -239,18 +283,17 @@ export default function FriendPage({ params }: { params: { id: string } }) {
           <div>
             <h1 className="h1">{friend ? `${friend.riotName}#${friend.riotTag}` : "Monkey"}</h1>
             <p className="p">
-              Ranked Solo:{" "}
-              <b>
-                {formatRank(
-                  friend?.rankedSoloTier ?? null,
-                  friend?.rankedSoloRank ?? null,
-                  friend?.rankedSoloLP ?? null
-                )}
-              </b>
+              Solo: <b>{formatRank(friend?.rankedSoloTier ?? null, friend?.rankedSoloRank ?? null, friend?.rankedSoloLP ?? null)}</b>
               {wr != null && (
                 <>
-                  {" "}
-                  · WR <b>{wr}%</b> ({friend?.rankedSoloWins ?? 0}-{friend?.rankedSoloLosses ?? 0})
+                  {" "}· WR <b>{wr}%</b> ({friend?.rankedSoloWins ?? 0}-{friend?.rankedSoloLosses ?? 0})
+                </>
+              )}
+              <br />
+              Flex: <b>{formatRank(friend?.rankedFlexTier ?? null, friend?.rankedFlexRank ?? null, friend?.rankedFlexLP ?? null)}</b>
+              {wrFlex != null && (
+                <>
+                  {" "}· WR <b>{wrFlex}%</b> ({friend?.rankedFlexWins ?? 0}-{friend?.rankedFlexLosses ?? 0})
                 </>
               )}
             </p>
@@ -363,12 +406,19 @@ export default function FriendPage({ params }: { params: { id: string } }) {
             </p>
           ) : (
             <div className="grid">
-              {matches.map((m) => {
-                const opened = !!open[m.matchId];
-                const incomplete = (m.participantCount ?? 10) < 10;
+              {groupedByDay.map((g) => (
+                <div key={g.key} className="grid" style={{ gap: 10 }}>
+                  <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
+                    <div className="name" style={{ fontSize: 14 }}>{g.label}</div>
+                    <div className="sub">{g.items.length} game{g.items.length > 1 ? "s" : ""}</div>
+                  </div>
 
-                return (
-                  <div key={m.matchId} className="matchCard">
+                  {g.items.map((m) => {
+                    const opened = !!open[m.matchId];
+                    const incomplete = (m.participantCount ?? 10) < 10;
+
+                    return (
+                      <div key={m.matchId} className="matchCard">
                     {/* Summary */}
                     <button
                       className="matchHeader"
@@ -505,9 +555,11 @@ export default function FriendPage({ params }: { params: { id: string } }) {
                         </div>
                       </div>
                     ) : null}
-                  </div>
-                );
-              })}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           )}
 

@@ -35,7 +35,8 @@ code{color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);padding:.1rem .
 .h1{font-size:24px;margin:0;letter-spacing:.2px}
 .p{margin:6px 0 0;color:var(--muted);font-size:14px}
 .grid{display:grid;gap:14px}
-@media(min-width:900px){.grid.cols2{grid-template-columns:420px 1fr}}
+/* Equal split on desktop for cleaner layout */
+@media(min-width:900px){.grid.cols2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
 .card{
   border:1px solid var(--border);border-radius:var(--radius);
   background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
@@ -69,9 +70,20 @@ code{color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);padding:.1rem .
 .small{font-size:13px;color:var(--muted)}
 .hr{height:1px;background:var(--border);margin:12px 0}
 .friendCard{
-  display:flex;align-items:center;gap:12px;padding:12px;border-radius:14px;
-  border:1px solid var(--border);background:rgba(0,0,0,.18);
+  display:grid;
+  grid-template-columns:44px minmax(0,1fr);
+  gap:12px;
+  align-items:center;
+  padding:12px;
+  border-radius:14px;
+  border:1px solid var(--border);
+  background:rgba(0,0,0,.18);
 }
+@media(min-width:900px){
+  /* Avatar + 2 equal columns */
+  .friendCard{grid-template-columns:44px minmax(0,1fr) minmax(0,1fr)}
+}
+.friendCardSection{min-width:0}
 .avatar{
   width:44px;height:44px;border-radius:14px;border:1px solid var(--border);overflow:hidden;
   background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;
