@@ -39,6 +39,9 @@ region    String   @default("euw1")
   updatedAt DateTime @updatedAt
 
   matches   FriendMatch[]
+
+  // Progress state for budgeted / resumable sync
+  syncState FriendSyncState?
 }
 
 model Match {
@@ -122,6 +125,32 @@ model RankSnapshot {
 
   @@index([friendId, createdAt])
   @@index([queueType, createdAt])
+}
+
+model FriendSyncState {
+  friendId String @id
+  friend   Friend @relation(fields: [friendId], references: [id], onDelete: Cascade)
+
+  // Rank refresh marker (optional, Friend.rankFetchedAt is still the source of truth for UI)
+  rankSyncedAt DateTime?
+
+  // Matchlist pagination cursor (start=0,100,200...) and done flag
+  matchlistCursorStart Int     @default(0)
+  matchlistDone        Boolean @default(false)
+
+  // Backfill window (seconds since epoch). We freeze endTs when a backfill starts
+  // to avoid pagination shifting when new games are played.
+  backfillFromTs BigInt?
+  backfillEndTs  BigInt?
+
+  // Operational
+  lastRunAt      DateTime?
+  syncLockUntil  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([matchlistDone, updatedAt])
 }
 
 model SyncLock {

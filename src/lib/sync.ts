@@ -276,7 +276,7 @@ export async function syncFriendRank(friendId: string) {
   return { skipped: false };
 }
 
-async function upsertParticipants(matchId: string, raw: any) {
+export async function upsertParticipants(matchId: string, raw: any) {
   const prisma = getPrisma();
   const parts = raw?.info?.participants;
   if (!Array.isArray(parts)) return;

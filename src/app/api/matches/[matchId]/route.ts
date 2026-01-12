@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";
+import { getMatchTimelineById } from "@/lib/riot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,14 +45,38 @@ function normalizeParticipantsFromRaw(raw: any) {
     .filter((p: any) => p.puuid);
 }
 
-export async function GET(_req: Request, { params }: { params: { matchId: string } }) {
+export async function GET(req: Request, { params }: { params: { matchId: string } }) {
   const prisma = getPrisma();
+
+  const url = new URL(req.url);
+  const includeTimeline = url.searchParams.get("includeTimeline") === "1" || url.searchParams.get("timeline") === "1";
 
   const match = await prisma.match.findUnique({
     where: { id: params.matchId },
     include: { participants: true, friends: { include: { friend: true } } },
   });
   if (!match) return NextResponse.json({ error: "Match not found" }, { status: 404 });
+
+  // Timeline on-demand (heavy): only if explicitly requested.
+  let timelineJson = match.timelineJson;
+  let timelineFetchedAt = match.timelineFetchedAt;
+
+  if (includeTimeline && !timelineJson) {
+    try {
+      const timeline = await getMatchTimelineById(params.matchId, { label: "match/timeline" });
+      const updated = await prisma.match.update({
+        where: { id: params.matchId },
+        data: { timelineJson: timeline, timelineFetchedAt: new Date() },
+      });
+      timelineJson = updated.timelineJson;
+      timelineFetchedAt = updated.timelineFetchedAt;
+    } catch (e: any) {
+      return NextResponse.json(
+        { error: e?.message ?? "Failed to fetch timeline" },
+        { status: 502 },
+      );
+    }
+  }
 
   let parts: any[] = Array.isArray(match.participants) ? match.participants : [];
   if (parts.length < 10) {
@@ -91,7 +116,7 @@ export async function GET(_req: Request, { params }: { params: { matchId: string
     gameStartMs: match.gameStartMs?.toString() ?? null,
     gameDurationS: match.gameDurationS,
     fetchedAt: match.fetchedAt,
-    timelineFetchedAt: match.timelineFetchedAt,
+    timelineFetchedAt,
     teams: teamPayload,
     friends: friendTags,
     participants: parts.map((p) => ({
@@ -111,7 +136,7 @@ export async function GET(_req: Request, { params }: { params: { matchId: string
       gold: p.goldEarned,
     })),
     raw: match.rawJson,
-    timeline: match.timelineJson,
+    timeline: includeTimeline ? timelineJson : null,
     participantCount: parts.length,
   };
 

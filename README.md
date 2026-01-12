@@ -121,6 +121,25 @@ create table if not exists "SyncLock" (
   "updatedAt" timestamptz not null default now()
 );
 
+-- --- FriendSyncState (sync progress / backfill cursor) ---
+create table if not exists "FriendSyncState" (
+  "friendId" text primary key,
+  "rankSyncedAt" timestamptz null,
+  "matchlistCursorStart" int4 not null default 0,
+  "matchlistDone" boolean not null default false,
+  "backfillFromTs" int8 null,
+  "backfillEndTs" int8 null,
+  "lastRunAt" timestamptz null,
+  "syncLockUntil" timestamptz null,
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now(),
+
+  constraint "FriendSyncState_friendId_fkey"
+    foreign key ("friendId") references "Friend"("id") on delete cascade
+);
+
+create index if not exists "FriendSyncState_done_updated_idx" on "FriendSyncState" ("matchlistDone","updatedAt");
+
 -- --- Indices utiles ---
 create index if not exists "FriendMatch_friend_added_idx" on "FriendMatch" ("friendId","addedAt");
 create index if not exists "Match_fetchedAt_idx" on "Match" ("fetchedAt");

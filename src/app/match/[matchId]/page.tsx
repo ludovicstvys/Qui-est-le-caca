@@ -57,7 +57,8 @@ export default function MatchPage({ params }: { params: { matchId: string } }) {
   }
 
   useEffect(() => {
-    fetch(`/api/matches/${params.matchId}`, { cache: "no-store" })
+    // Fetch timeline on-demand (cached in DB after first view)
+    fetch(`/api/matches/${params.matchId}?includeTimeline=1`, { cache: "no-store" })
       .then((r) => r.json().then((j) => ({ r, j })))
       .then(({ r, j }) => {
         if (!r.ok) throw new Error(j.error ?? "Match introuvable");
