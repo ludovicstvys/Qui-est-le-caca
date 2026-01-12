@@ -23,6 +23,9 @@ async function handleSync(req: Request) {
       ok: boolean;
       error?: string;
       syncedMatches?: number;
+      fetchedDetails?: number;
+      timelineFetched?: number;
+      stoppedEarly?: boolean;
     }> = [];
 
     const safeCount = Number.isFinite(count) ? Math.max(1, Math.min(count, 50)) : 10;
@@ -37,6 +40,9 @@ async function handleSync(req: Request) {
           riot: `${f.riotName}#${f.riotTag}`,
           ok: true,
           syncedMatches: r.matchIds.length,
+          fetchedDetails: (r as any).fetchedDetails,
+          timelineFetched: (r as any).timelineFetched,
+          stoppedEarly: (r as any).stoppedEarly,
         });
       } catch (e: any) {
         results.push({

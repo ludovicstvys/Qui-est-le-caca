@@ -337,6 +337,24 @@ export async function syncFriendMatches(
 ) {
   const prisma = getPrisma();
 
+  // ---- Serverless safety knobs ----
+  // We always store/link ALL matchIds we discover, but we only fetch match details for
+  // a bounded subset per invocation to avoid Vercel 300s timeouts.
+  //
+  // Defaults are intentionally conservative on Vercel.
+  const isVercel = !!process.env.VERCEL;
+  const detailsPerRun = (() => {
+    const v = process.env.MATCH_DETAILS_PER_RUN;
+    const n = v ? Number(v) : (isVercel ? 12 : 80);
+    return Number.isFinite(n) ? Math.max(1, Math.min(n, 300)) : (isVercel ? 12 : 80);
+  })();
+  const timeBudgetMs = (() => {
+    const v = process.env.SYNC_TIME_BUDGET_MS;
+    const n = v ? Number(v) : (isVercel ? 240_000 : 1_000_000);
+    return Number.isFinite(n) ? Math.max(30_000, Math.min(n, 2_000_000)) : (isVercel ? 240_000 : 1_000_000);
+  })();
+  const startedAt = Date.now();
+
   const opts =
     typeof countOrOpts === "number"
       ? { count: countOrOpts }
@@ -346,7 +364,11 @@ export async function syncFriendMatches(
 
   // Backfill mode (load all matches since a date), with safety max to avoid timeouts.
   const from = opts.from?.trim();
-  const max = Number.isFinite(Number(opts.max)) ? Math.max(1, Math.min(Number(opts.max), 800)) : 180;
+  // If caller doesn't specify max, keep it small on Vercel; the remaining matches will be linked
+  // and fetched progressively across subsequent runs.
+  const max = Number.isFinite(Number(opts.max))
+    ? Math.max(1, Math.min(Number(opts.max), 800))
+    : (isVercel ? 60 : 180);
 
   let matchIds: string[] = [];
 
@@ -397,10 +419,34 @@ export async function syncFriendMatches(
   });
 
   // Optional: fetch timeline too (can be heavy). Enable by setting FETCH_TIMELINE="1"
-  const fetchTimeline = process.env.FETCH_TIMELINE === "1";
+  const fetchTimelineRequested = process.env.FETCH_TIMELINE === "1";
+  // Never fetch timelines for large backfills; it explodes runtime.
+  const timelineMaxMatches = (() => {
+    const v = process.env.TIMELINE_MAX_MATCHES;
+    const n = v ? Number(v) : (isVercel ? 1 : 5);
+    return Number.isFinite(n) ? Math.max(0, Math.min(n, 25)) : (isVercel ? 1 : 5);
+  })();
+  const fetchTimeline = fetchTimelineRequested && !from && timelineMaxMatches > 0;
+  let timelineFetched = 0;
+
+  let fetchedDetails = 0;
+  let stoppedEarly = false;
 
   // 3) Fetch details and update
   for (const matchId of matchIds) {
+    // Stop early if we are near serverless timeout.
+    if (Date.now() - startedAt > timeBudgetMs) {
+      stoppedEarly = true;
+      break;
+    }
+
+    // Bound how many *new* match payloads we fetch per run.
+    // (We still link/store all matchIds so future runs can continue progressively.)
+    if (fetchedDetails >= detailsPerRun) {
+      stoppedEarly = true;
+      break;
+    }
+
     const existing = await prisma.match.findUnique({ where: { id: matchId } });
 
     const shouldFetchMatch =
@@ -429,6 +475,8 @@ export async function syncFriendMatches(
       });
 
       await upsertParticipants(matchId, raw);
+
+      fetchedDetails += 1;
     } else {
       // If match was fetched in older versions but participants table is empty,
       // rebuild participants from existing rawJson WITHOUT calling Riot again.
@@ -447,7 +495,7 @@ export async function syncFriendMatches(
       }
     }
 
-    if (fetchTimeline) {
+    if (fetchTimeline && timelineFetched < timelineMaxMatches) {
       const current = existing ?? (await prisma.match.findUnique({ where: { id: matchId } }));
       const shouldFetchTimeline =
         !current?.timelineJson || !current?.timelineFetchedAt || !isFresh(current.timelineFetchedAt);
@@ -458,6 +506,8 @@ export async function syncFriendMatches(
           where: { id: matchId },
           data: { timelineJson: timeline, timelineFetchedAt: new Date() },
         });
+
+        timelineFetched += 1;
       }
     }
   }
@@ -467,5 +517,25 @@ export async function syncFriendMatches(
     data: { lastMatchId: matchIds[0] ?? null, lastSyncAt: new Date() },
   });
 
-  return { puuid, matchIds };
+  // Helpful for debugging/timeouts
+  const debugOn = (() => {
+    const v = String(process.env.DEBUG_RIOT || "").trim().toLowerCase();
+    return v === "1" || v === "true" || v === "yes" || v === "on";
+  })();
+
+  if (debugOn && stoppedEarly) {
+    // eslint-disable-next-line no-console
+    console.log(`[DEBUG_RIOT] friendId=${friendId} label=syncFriendMatches stopped early`, {
+      from: from ?? null,
+      matchIds: matchIds.length,
+      fetchedDetails,
+      detailsPerRun,
+      timelineFetched,
+      timelineMaxMatches,
+      elapsedMs: Date.now() - startedAt,
+      timeBudgetMs,
+    });
+  }
+
+  return { puuid, matchIds, fetchedDetails, timelineFetched, stoppedEarly };
 }

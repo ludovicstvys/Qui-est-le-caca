@@ -22,6 +22,9 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     return NextResponse.json({
       ok: true,
       matchCount: r.matchIds.length,
+      fetchedDetails: (r as any).fetchedDetails,
+      timelineFetched: (r as any).timelineFetched,
+      stoppedEarly: (r as any).stoppedEarly,
       mode: from ? "backfill" : "latest",
       from: from ?? null,
       max: max ?? null,
