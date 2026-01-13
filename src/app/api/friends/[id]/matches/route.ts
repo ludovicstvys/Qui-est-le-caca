@@ -56,103 +56,116 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   const friend = await prisma.friend.findUnique({ where: { id: params.id } });
   if (!friend) return NextResponse.json({ error: "Friend not found" }, { status: 404 });
 
+  const fromMs = from ? new Date(`${from}T00:00:00Z`).getTime() : null;
+  const queryTake = fromMs ? Math.min(take * 4, 600) : take;
+
   const rows = await prisma.friendMatch.findMany({
     where: { friendId: params.id },
     include: { match: { include: { participants: true } } },
     // Display games by real in-game date (not insertion date).
     orderBy: [{ match: { gameStartMs: "desc" } }, { addedAt: "desc" }],
-    take,
+    take: queryTake,
   });
 
-  
-  const fromMs = from ? new Date(`${from}T00:00:00Z`).getTime() : null;
-const payload = rows
-    .filter((r) => r.match)
-    .map((r) => {
-      const m = r.match!;
+  // If from is set, keep "unknown date" matches instead of hiding everything.
+  const filtered = fromMs
+    ? rows.filter((r) => r.match && (r.match.gameStartMs == null || Number(r.match.gameStartMs) >= fromMs))
+    : rows.filter((r) => r.match);
 
-      // Prefer denormalized table; fallback to rawJson if old DB or missing participants
-      let parts: any[] = Array.isArray(m.participants) ? m.participants : [];
-      if (parts.length < 10) {
-        const fromRaw = normalizeParticipantsFromRaw(m.rawJson);
-        if (fromRaw.length >= parts.length) parts = fromRaw;
-      }
+  // Defensive: if DB was ever polluted, ensure unique matchIds in response.
+  const uniq: typeof filtered = [];
+  const seen = new Set<string>();
+  for (const r of filtered) {
+    if (seen.has(r.matchId)) continue;
+    seen.add(r.matchId);
+    uniq.push(r);
+    if (uniq.length >= take) break;
+  }
 
-      const me = friend.puuid ? parts.find((p) => p.puuid === friend.puuid) : null;
+  const payload = uniq.map((r) => {
+    const m = r.match!;
 
-      const teamId = me?.teamId ?? null;
-      const allies = teamId != null ? parts.filter((p) => p.teamId === teamId) : [];
-      const enemies = teamId != null ? parts.filter((p) => p.teamId != null && p.teamId !== teamId) : [];
+    // Prefer denormalized table; fallback to rawJson if old DB or missing participants
+    let parts: any[] = Array.isArray(m.participants) ? m.participants : [];
+    if (parts.length < 10) {
+      const fromRaw = normalizeParticipantsFromRaw(m.rawJson);
+      if (fromRaw.length >= parts.length) parts = fromRaw;
+    }
 
-      const sum = (arr: any[], key: string) =>
-        arr.reduce((s, p) => s + (typeof (p as any)[key] === "number" ? (p as any)[key] : 0), 0);
+    const me = friend.puuid ? parts.find((p) => p.puuid === friend.puuid) : null;
 
-      const allyKills = sum(allies, "kills");
-      const enemyKills = sum(enemies, "kills");
-      const allyGold = sum(allies, "goldEarned");
-      const enemyGold = sum(enemies, "goldEarned");
-      const allyDmg = sum(allies, "totalDamageDealtToChampions");
-      const enemyDmg = sum(enemies, "totalDamageDealtToChampions");
+    const teamId = me?.teamId ?? null;
+    const allies = teamId != null ? parts.filter((p) => p.teamId === teamId) : [];
+    const enemies = teamId != null ? parts.filter((p) => p.teamId != null && p.teamId !== teamId) : [];
 
-      return {
-        matchId: r.matchId,
-        gameStartMs: m.gameStartMs?.toString() ?? null,
-        gameDurationS: m.gameDurationS,
-        queueId: m.queueId,
-        win: me?.win ?? null,
-        champ: me?.championName ?? null,
-        lane: me?.lane ?? null,
-        role: me?.role ?? null,
-        k: me?.kills ?? null,
-        d: me?.deaths ?? null,
-        a: me?.assists ?? null,
-        cs: me ? cs(me) : null,
-        vision: me?.visionScore ?? null,
-        dmg: me?.totalDamageDealtToChampions ?? null,
-        gold: me?.goldEarned ?? null,
-        team: {
-          allyKills,
-          enemyKills,
-          allyGold,
-          enemyGold,
-          allyDmg,
-          enemyDmg,
-        },
-        allies: allies.map((p) => ({
-          name: displayName(p),
-          champ: p.championName ?? null,
-          lane: p.lane ?? null,
-          role: p.role ?? null,
-          k: p.kills ?? null,
-          d: p.deaths ?? null,
-          a: p.assists ?? null,
-          cs: cs(p),
-          vision: p.visionScore ?? null,
-          dmg: p.totalDamageDealtToChampions ?? null,
-          gold: p.goldEarned ?? null,
-          puuid: p.puuid,
-        })),
-        enemies: enemies.map((p) => ({
-          name: displayName(p),
-          champ: p.championName ?? null,
-          lane: p.lane ?? null,
-          role: p.role ?? null,
-          k: p.kills ?? null,
-          d: p.deaths ?? null,
-          a: p.assists ?? null,
-          cs: cs(p),
-          vision: p.visionScore ?? null,
-          dmg: p.totalDamageDealtToChampions ?? null,
-          gold: p.goldEarned ?? null,
-          puuid: p.puuid,
-        })),
-        // Keep raw for debugging / future enrich (but don't rely on it for UI)
-        raw: m.rawJson,
-        timeline: includeTimeline ? m.timelineJson : undefined,
-        // for UI collapse
-        participantCount: parts.length,
-      };
-    });
+    const sum = (arr: any[], key: string) =>
+      arr.reduce((s, p) => s + (typeof (p as any)[key] === "number" ? (p as any)[key] : 0), 0);
+
+    const allyKills = sum(allies, "kills");
+    const enemyKills = sum(enemies, "kills");
+    const allyGold = sum(allies, "goldEarned");
+    const enemyGold = sum(enemies, "goldEarned");
+    const allyDmg = sum(allies, "totalDamageDealtToChampions");
+    const enemyDmg = sum(enemies, "totalDamageDealtToChampions");
+
+    return {
+      matchId: r.matchId,
+      gameStartMs: m.gameStartMs?.toString() ?? null,
+      gameDurationS: m.gameDurationS,
+      queueId: m.queueId,
+      win: me?.win ?? null,
+      champ: me?.championName ?? null,
+      lane: me?.lane ?? null,
+      role: me?.role ?? null,
+      k: me?.kills ?? null,
+      d: me?.deaths ?? null,
+      a: me?.assists ?? null,
+      cs: me ? cs(me) : null,
+      vision: me?.visionScore ?? null,
+      dmg: me?.totalDamageDealtToChampions ?? null,
+      gold: me?.goldEarned ?? null,
+      team: {
+        allyKills,
+        enemyKills,
+        allyGold,
+        enemyGold,
+        allyDmg,
+        enemyDmg,
+      },
+      allies: allies.map((p) => ({
+        name: displayName(p),
+        champ: p.championName ?? null,
+        lane: p.lane ?? null,
+        role: p.role ?? null,
+        k: p.kills ?? null,
+        d: p.deaths ?? null,
+        a: p.assists ?? null,
+        cs: cs(p),
+        vision: p.visionScore ?? null,
+        dmg: p.totalDamageDealtToChampions ?? null,
+        gold: p.goldEarned ?? null,
+        puuid: p.puuid,
+      })),
+      enemies: enemies.map((p) => ({
+        name: displayName(p),
+        champ: p.championName ?? null,
+        lane: p.lane ?? null,
+        role: p.role ?? null,
+        k: p.kills ?? null,
+        d: p.deaths ?? null,
+        a: p.assists ?? null,
+        cs: cs(p),
+        vision: p.visionScore ?? null,
+        dmg: p.totalDamageDealtToChampions ?? null,
+        gold: p.goldEarned ?? null,
+        puuid: p.puuid,
+      })),
+      // Keep raw for debugging / future enrich (but don't rely on it for UI)
+      raw: m.rawJson,
+      timeline: includeTimeline ? m.timelineJson : undefined,
+      participantCount: parts.length,
+    };
+  });
 
   return NextResponse.json(payload);
 }

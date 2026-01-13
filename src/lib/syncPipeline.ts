@@ -46,6 +46,18 @@ function shouldStop(startedAt: number, budgetMs: number) {
   return Date.now() - startedAt >= Math.max(1, budgetMs - 1500);
 }
 
+function dedupeKeepOrder(ids: string[]) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids) {
+    if (typeof id !== "string" || id.length === 0) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 async function ensureFriendSyncState(friendId: string) {
   const prisma = getPrisma();
   return prisma.friendSyncState.upsert({
@@ -83,7 +95,16 @@ async function releaseFriendLock(friendId: string) {
     .catch(() => {});
 }
 
-async function linkMatchIds(friendId: string, opts: { mode: SyncMode; fromSeconds?: number | null; maxPerRun: number; maxPages: number; timeBudget: { startedAt: number; budgetMs: number } }) {
+async function linkMatchIds(
+  friendId: string,
+  opts: {
+    mode: SyncMode;
+    fromSeconds?: number | null;
+    maxPerRun: number;
+    maxPages: number;
+    timeBudget: { startedAt: number; budgetMs: number };
+  }
+) {
   const prisma = getPrisma();
   const friend = await prisma.friend.findUnique({ where: { id: friendId } });
   if (!friend) throw new Error("Friend not found");
@@ -94,19 +115,21 @@ async function linkMatchIds(friendId: string, opts: { mode: SyncMode; fromSecond
   let pages = 0;
 
   if (opts.mode === "latest") {
-    const ids = await getMatchIdsByPuuid(
+    const idsRaw = await getMatchIdsByPuuid(
       puuid,
       { start: 0, count: Math.max(1, Math.min(100, opts.maxPerRun)) },
       { friendId, label: "match/ids/by-puuid" }
     );
 
-    // 1) create placeholders for matches
+    const ids = dedupeKeepOrder(Array.isArray(idsRaw) ? idsRaw : []);
+
+    // 1) create placeholders for matches (unique on Match.id)
     await prisma.match.createMany({
       data: ids.map((id) => ({ id, rawJson: {}, fetchedAt: new Date(0) })),
       skipDuplicates: true,
     });
 
-    // 2) link friend<->match
+    // 2) link friend<->match (unique on @@id([friendId, matchId]))
     await prisma.friendMatch.createMany({
       data: ids.map((matchId) => ({ friendId, matchId })),
       skipDuplicates: true,
@@ -133,7 +156,7 @@ async function linkMatchIds(friendId: string, opts: { mode: SyncMode; fromSecond
   const state0 = await ensureFriendSyncState(friendId);
   const fromSeconds = opts.fromSeconds;
   if (!fromSeconds) {
-    throw new Error("Backfill requires a valid 'from' date (YYYY-MM-DD).");
+    throw new Error("Backfill requires a valid 'from' date (YYYY-MM-DD). ");
   }
 
   const sameFrom = state0.backfillFromTs != null && BigInt(fromSeconds) === BigInt(state0.backfillFromTs);
@@ -166,7 +189,7 @@ async function linkMatchIds(friendId: string, opts: { mode: SyncMode; fromSecond
     const left = opts.maxPerRun - linked;
     const count = Math.min(pageSize, left);
 
-    const ids = await getMatchIdsByPuuid(
+    const idsRaw = await getMatchIdsByPuuid(
       puuid,
       { start: cursor, count, startTime: fromSeconds, endTime: endSeconds },
       { friendId, label: "match/ids/by-puuid" }
@@ -174,10 +197,13 @@ async function linkMatchIds(friendId: string, opts: { mode: SyncMode; fromSecond
 
     pages += 1;
 
-    if (!Array.isArray(ids) || ids.length === 0) {
+    const idsFromApi = Array.isArray(idsRaw) ? idsRaw : [];
+    if (idsFromApi.length === 0) {
       done = true;
       break;
     }
+
+    const ids = dedupeKeepOrder(idsFromApi);
 
     await prisma.match.createMany({
       data: ids.map((id) => ({ id, rawJson: {}, fetchedAt: new Date(0) })),
@@ -190,9 +216,11 @@ async function linkMatchIds(friendId: string, opts: { mode: SyncMode; fromSecond
     });
 
     linked += ids.length;
-    cursor += ids.length;
 
-    if (ids.length < count) {
+    // Cursor must move by API page size to avoid re-fetching the same page.
+    cursor += idsFromApi.length;
+
+    if (idsFromApi.length < count) {
       done = true;
       break;
     }
@@ -231,7 +259,7 @@ async function fetchMatchDetails(matchIds: string[], timeBudget: { startedAt: nu
     const queueId = typeof info?.queueId === "number" ? info.queueId : null;
     const platform = typeof info?.platformId === "string" ? info.platformId : null;
 
-    // Ensure row exists
+    // Ensure row exists (Match.id is unique => cannot be duplicated)
     if (!existing) {
       await prisma.match.create({
         data: {
@@ -273,7 +301,7 @@ export async function runSync(options: RunSyncOptions = {}) {
   const timeBudget = { startedAt, budgetMs };
 
   const fromSeconds = parseFromDateToSeconds(options.from ?? null);
-  const mode: SyncMode = options.from ? "backfill" : (options.mode ?? "latest");
+  const mode: SyncMode = options.from ? "backfill" : options.mode ?? "latest";
 
   const maxFriends = clampInt(options.count ?? process.env.SYNC_MAX_FRIENDS_PER_RUN, 5, 1, 50);
   const maxIdPagesPerFriend = clampInt(process.env.SYNC_MATCH_ID_PAGES_PER_FRIEND, 1, 0, 10);
@@ -348,12 +376,11 @@ export async function runSync(options: RunSyncOptions = {}) {
       res.rank = { skipped: (rr as any)?.skipped === true };
 
       // B) Match IDs
-      const idPages = maxIdPagesPerFriend;
       const { linked, pages } = await linkMatchIds(f.id, {
         mode,
         fromSeconds,
         maxPerRun: maxMatchIdsPerFriendPerRun,
-        maxPages: idPages,
+        maxPages: maxIdPagesPerFriend,
         timeBudget,
       });
       res.matchesLinked = linked;
@@ -369,54 +396,71 @@ export async function runSync(options: RunSyncOptions = {}) {
     }
   }
 
-  // C) Fetch match details (global cap)
+  // C) Fetch match details (global cap) — optimized to avoid starvation
   let detailsFetched = 0;
   const remainingDetails = Math.max(0, maxDetailsPerRun);
 
-  if (remainingDetails > 0 && !shouldStop(startedAt, budgetMs)) {
-    // 1) Prioritize matches linked to processed friends
-    const fm1 = processedFriendIds.length
-      ? await prisma.friendMatch.findMany({
-          where: {
-            friendId: { in: processedFriendIds },
-            match: { gameStartMs: null },
-          },
-          orderBy: { addedAt: "desc" },
-          take: remainingDetails * 4,
-          select: { matchId: true },
-        })
-      : [];
+  const pickDetailCandidates = async (limit: number) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
 
-    const unique = (arr: Array<{ matchId: string }>) => {
-      const out: string[] = [];
-      const seen = new Set<string>();
-      for (const x of arr) {
-        if (!seen.has(x.matchId)) {
-          seen.add(x.matchId);
-          out.push(x.matchId);
-        }
-      }
-      return out;
-    };
+    const perFriend = clampInt(process.env.SYNC_DETAILS_PER_FRIEND_PER_RUN, mode === "latest" ? 3 : 2, 0, 25);
 
-    let candidates = unique(fm1);
-
-    // 2) If we still have room, pick globally (keeps backfill progressing)
-    if (candidates.length < remainingDetails) {
-      const fm2 = await prisma.friendMatch.findMany({
-        where: { match: { gameStartMs: null } },
-        orderBy: { addedAt: "desc" },
-        take: remainingDetails * 6,
-        select: { matchId: true },
+    // In backfill, we may only process 1 friend for matchlist.
+    // Add a few other friends that still have missing details to keep UX alive everywhere.
+    let friendIds = processedFriendIds;
+    if (mode === "backfill") {
+      const extra = await prisma.friend.findMany({
+        where: { matches: { some: { match: { gameStartMs: null } } } },
+        select: { id: true },
+        orderBy: { lastSyncAt: "asc" },
+        take: Math.min(25, maxFriends * 4),
       });
-      for (const id of unique(fm2)) {
-        if (candidates.length >= remainingDetails) break;
-        if (!candidates.includes(id)) candidates.push(id);
+      friendIds = Array.from(new Set([...processedFriendIds, ...extra.map((x) => x.id)]));
+    }
+
+    if (perFriend > 0 && friendIds.length > 0) {
+      for (const fid of friendIds) {
+        if (out.length >= limit) break;
+        const need = Math.min(perFriend, limit - out.length);
+
+        const rows = await prisma.friendMatch.findMany({
+          where: { friendId: fid, match: { gameStartMs: null } },
+          orderBy: { addedAt: "desc" },
+          take: need * 6,
+          select: { matchId: true },
+        });
+
+        for (const r of rows) {
+          if (out.length >= limit) break;
+          if (seen.has(r.matchId)) continue;
+          seen.add(r.matchId);
+          out.push(r.matchId);
+        }
       }
     }
 
-    candidates = candidates.slice(0, remainingDetails);
+    if (out.length < limit) {
+      const rows = await prisma.friendMatch.findMany({
+        where: { match: { gameStartMs: null } },
+        orderBy: { addedAt: "desc" },
+        take: (limit - out.length) * 12,
+        select: { matchId: true },
+      });
 
+      for (const r of rows) {
+        if (out.length >= limit) break;
+        if (seen.has(r.matchId)) continue;
+        seen.add(r.matchId);
+        out.push(r.matchId);
+      }
+    }
+
+    return out;
+  };
+
+  if (remainingDetails > 0 && !shouldStop(startedAt, budgetMs)) {
+    const candidates = await pickDetailCandidates(remainingDetails);
     detailsFetched = await fetchMatchDetails(candidates, timeBudget);
   }
 
@@ -427,6 +471,21 @@ export async function runSync(options: RunSyncOptions = {}) {
 
   const okCount = results.filter((r) => r.ok).length;
   const stoppedEarly = shouldStop(startedAt, budgetMs);
+
+  // For front-loop orchestration
+  const [pendingMatchDetails, pendingBackfillFriends] = await Promise.all([
+    prisma.match.count({ where: { gameStartMs: null } }),
+    prisma.friendSyncState.count({ where: { matchlistDone: false } }),
+  ]);
+
+  const done = mode === "backfill" ? pendingMatchDetails === 0 && pendingBackfillFriends === 0 : pendingMatchDetails === 0;
+
+  const nextDelayMs = (() => {
+    // Conservative: keep some air between runs to smooth quota.
+    if (detailsFetched === 0) return 1200;
+    if (mode === "backfill") return 900;
+    return 650;
+  })();
 
   return {
     ok: true,
@@ -443,5 +502,11 @@ export async function runSync(options: RunSyncOptions = {}) {
       budgetMs,
       stoppedEarly,
     },
+    pending: {
+      matchDetails: pendingMatchDetails,
+      backfillFriends: pendingBackfillFriends,
+    },
+    done,
+    nextDelayMs,
   };
 }

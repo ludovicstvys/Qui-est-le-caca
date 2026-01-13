@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { formatRank, winrate, bestRankScore } from "@/lib/rank";
 import { queueLabel } from "@/lib/queues";
 import { Skeleton } from "@/components/Skeleton";
@@ -39,6 +39,21 @@ type OverviewFriend = {
   } | null;
 };
 
+type SyncResponse = {
+  ok: boolean;
+  okCount?: number;
+  total?: number;
+  error?: string;
+  done?: boolean;
+  nextDelayMs?: number;
+  pending?: { matchDetails: number; backfillFriends: number };
+  progress?: { friendsProcessed: number; detailsFetched: number; elapsedMs: number; budgetMs: number; stoppedEarly: boolean };
+};
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 function initials(name: string) {
   const parts = name.split(/\s+/).filter(Boolean);
   const a = (parts[0]?.[0] ?? "M").toUpperCase();
@@ -73,6 +88,13 @@ export default function HomePage() {
   const [sort, setSort] = useState<"lp" | "wr" | "last" | "name">("lp");
 
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const [loop, setLoop] = useState<{
+    label: string;
+    run: number;
+    pending?: { matchDetails: number; backfillFriends: number };
+  } | null>(null);
 
   function pushToast(type: Toast["type"], msg: string) {
     setToasts((t) => [...t, { id: `${Date.now()}-${Math.random()}`, type, msg }]);
@@ -97,37 +119,74 @@ export default function HomePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function stopLoop() {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+      pushToast("info", "Stop demandé.");
+    }
+  }
 
+  async function runLoop(url: string, label: string) {
+    if (busy) return;
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    setBusy(true);
+    setLoop({ label, run: 0 });
+    pushToast("info", `${label}…`);
+
+    try {
+      for (let i = 1; i <= 10_000; i++) {
+        if (ac.signal.aborted) break;
+
+        const res = await fetch(url, { method: "POST", signal: ac.signal });
+        const json = (await res.json().catch(() => ({}))) as SyncResponse;
+
+        if (!res.ok || !json.ok) {
+          pushToast("err", json.error ?? "Erreur sync");
+          break;
+        }
+
+        setLoop({ label, run: i, pending: json.pending });
+
+        // Refresh UI regularly (but not every tick)
+        if (i === 1 || i % 2 === 0 || (json.progress?.detailsFetched ?? 0) > 0) {
+          await loadOverview().catch(() => {});
+        }
+
+        if (json.done) {
+          pushToast("ok", `${label} terminé ✅`);
+          break;
+        }
+
+        const delay = typeof json.nextDelayMs === "number" ? Math.max(250, Math.min(json.nextDelayMs, 5000)) : 800;
+        await sleep(delay);
+      }
+    } catch (e: any) {
+      if (e?.name !== "AbortError") pushToast("err", e?.message ?? "Erreur");
+    } finally {
+      abortRef.current = null;
+      setLoop(null);
+      setBusy(false);
+      await loadOverview().catch(() => {});
+    }
+  }
 
   async function syncAll() {
-    setBusy(true);
-    pushToast("info", "Sync global en cours… (si quota Riot → attente automatique)");
-    const res = await fetch(`/api/sync?count=10`, { method: "POST" });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.ok) pushToast("err", json.error ?? "Erreur sync global");
-    else pushToast("ok", `Sync OK ✅ (${json.okCount}/${json.total})`);
-    await loadOverview().catch(() => {});
-    setBusy(false);
+    await runLoop(`/api/sync?mode=latest&count=10`, "Sync tout");
   }
 
   async function backfillAll2026() {
-    setBusy(true);
-    pushToast("info", "Backfill global depuis 2026… (peut être long / quota Riot)");
-    const res = await fetch(`/api/sync?from=2026-01-01&max=250`, { method: "POST" });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.ok) pushToast("err", json.error ?? "Erreur backfill global");
-    else pushToast("ok", `Backfill OK ✅ (${json.okCount}/${json.total})`);
-    await loadOverview().catch(() => {});
-    setBusy(false);
+    await runLoop(`/api/sync?from=2026-01-01&max=250&count=10`, "Backfill 2026");
   }
 
   const filtered = useMemo(() => {
     const list = friends ?? [];
     const qq = q.trim().toLowerCase();
 
-    const base = qq
-      ? list.filter((f) => `${f.riotName}#${f.riotTag}`.toLowerCase().includes(qq))
-      : list;
+    const base = qq ? list.filter((f) => `${f.riotName}#${f.riotTag}`.toLowerCase().includes(qq)) : list;
 
     const cmp = (a: OverviewFriend, b: OverviewFriend) => {
       if (sort === "name") return `${a.riotName}#${a.riotTag}`.localeCompare(`${b.riotName}#${b.riotTag}`);
@@ -165,50 +224,59 @@ export default function HomePage() {
           </div>
           <div>
             <h1 className="h1">Monkeys dashboard</h1>
-            <p className="p">
-              Overview : rank/LP, winrate ranked, dernière game — + sync auto (cron) côté serveur.
-            </p>
+            <p className="p">Overview : rank/LP, winrate ranked, dernière game — + sync budgeté sans timeout.</p>
           </div>
         </div>
 
         <div className="row">
           <div className="navlinks">
-            <a className="smallLink" href="/synergy">Synergie</a>
+            <a className="smallLink" href="/synergy">
+              Synergie
+            </a>
           </div>
-          <button className="button buttonPrimary" onClick={syncAll} disabled={busy || (friends?.length ?? 0) === 0}>
-            {busy ? "…" : "Sync tout"}
+
+          <a className="button buttonPrimary" href="/add">
+            + add
+          </a>
+
+          <button className="button" onClick={syncAll} disabled={busy || (friends?.length ?? 0) === 0}>
+            {busy && loop?.label === "Sync tout" ? `… (${loop.run})` : "Sync tout"}
           </button>
+
           <button className="button" onClick={backfillAll2026} disabled={busy || (friends?.length ?? 0) === 0}>
-            {busy ? "…" : "Backfill 2026"}
+            {busy && loop?.label === "Backfill 2026" ? `… (${loop.run})` : "Backfill 2026"}
           </button>
-          <span className="badge">Next.js · Prisma · PostgreSQL</span>
+
+          {busy && (
+            <button className="button buttonDanger" onClick={stopLoop}>
+              Stop
+            </button>
+          )}
+
+          {loop?.pending ? (
+            <span className="badge">
+              run {loop.run} · pending details {loop.pending.matchDetails} · pending backfill {loop.pending.backfillFriends}
+            </span>
+          ) : (
+            <span className="badge">Next.js · Prisma · PostgreSQL</span>
+          )}
         </div>
       </header>
 
-      <div style={{ marginTop: 14 }} className="grid cols2">
-        <section className="card">
-          <h2 className="cardTitle">Actions</h2>
-
-          <div className="grid" style={{ gap: 10 }}>
-            <a className="button buttonPrimary" href="/add">
-              + Ajouter un monkey
-            </a>
-
-            <div className="rowCard">
-              <div className="name" style={{ fontSize: 14 }}>Conseils</div>
-              <div className="sub" style={{ marginTop: 4 }}>
-                • Anti-quota Riot : délai min + retry automatique (429 Retry-After).<br />
-                • Le sync global récupère rank + derniers matchs (données complètes + participants).
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="card">
+      <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
+        <section className="card" style={{ width: "min(900px, 100%)" }}>
           <div className="row" style={{ justifyContent: "space-between" }}>
-            <h2 className="cardTitle" style={{ marginBottom: 0 }}>Monkeys</h2>
+            <h2 className="cardTitle" style={{ marginBottom: 0 }}>
+              Monkeys
+            </h2>
             <div className="row" style={{ gap: 8 }}>
-              <input className="input" style={{ width: 220 }} placeholder="Recherche…" value={q} onChange={(e) => setQ(e.target.value)} />
+              <input
+                className="input"
+                style={{ width: 220 }}
+                placeholder="Recherche…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
               <select className="input" style={{ width: 170 }} value={sort} onChange={(e) => setSort(e.target.value as any)}>
                 <option value="lp">Tri: LP</option>
                 <option value="wr">Tri: Winrate</option>
@@ -240,6 +308,7 @@ export default function HomePage() {
                 const wrLabel = useSoloWr ? "Solo" : "Flex";
                 const wins = useSoloWr ? (f.rankedSoloWins ?? 0) : (f.rankedFlexWins ?? 0);
                 const losses = useSoloWr ? (f.rankedSoloLosses ?? 0) : (f.rankedFlexLosses ?? 0);
+
                 return (
                   <div key={f.id} className="friendCard">
                     <div className="avatar">
@@ -247,7 +316,9 @@ export default function HomePage() {
                     </div>
 
                     <div className="friendCardSection">
-                      <div className="name">{f.riotName}#{f.riotTag}</div>
+                      <div className="name">
+                        {f.riotName}#{f.riotTag}
+                      </div>
                       <div className="sub" style={{ marginTop: 2 }}>
                         Solo: <b>{formatRank(f.rankedSoloTier ?? null, f.rankedSoloRank ?? null, f.rankedSoloLP ?? null)}</b>
                       </div>
@@ -267,17 +338,21 @@ export default function HomePage() {
                     <div className="friendCardSection">
                       {f.lastGame ? (
                         <div className="sub">
-                          <b>{queueLabel(f.lastGame.queueId)}</b> · {f.lastGame.champ ?? "—"} · {f.lastGame.win ? "W" : "L"} ·{" "}
+                          <b>{queueLabel(f.lastGame.queueId)}</b> · {f.lastGame.champ ?? "—"} · {f.lastGame.win ? "W" : "L"} · {" "}
                           {f.lastGame.kda ?? "—"} · {fmtWhen(f.lastGame.gameStartMs)}
                         </div>
                       ) : (
-                        <div className="sub">Aucune game en DB (sync)</div>
+                        <div className="sub">Aucune game en DB (détails en cours…)</div>
                       )}
 
                       {f.lastGame?.matchId && (
                         <div className="row" style={{ marginTop: 8, justifyContent: "flex-end" }}>
-                          <a className="button" href={`/friend/${f.id}`}>Stats</a>
-                          <a className="button" href={`/match/${f.lastGame.matchId}`}>Match</a>
+                          <a className="button" href={`/friend/${f.id}`}>
+                            Stats
+                          </a>
+                          <a className="button" href={`/match/${f.lastGame.matchId}`}>
+                            Match
+                          </a>
                         </div>
                       )}
                     </div>
