@@ -8,7 +8,9 @@ import { formatRank, winrate } from "@/lib/rank";
 import { Skeleton } from "@/components/Skeleton";
 import { ToastHost, Toast } from "@/components/ToastHost";
 
-const FROM_2026 = "2026-01-01";
+// Backfill window (keep the API param precise, display a clean label in UI)
+const BACKFILL_FROM = "2026-01-01";
+const BACKFILL_LABEL = "2026";
 
 type Friend = {
   id: string;
@@ -129,7 +131,7 @@ export default function FriendPage({ params }: { params: { id: string } }) {
   async function loadAll(nextTake = take) {
     const [f, m, s] = await Promise.all([
       fetch(`/api/friends/${params.id}`, { cache: "no-store" }).then((r) => r.json()),
-      fetch(`/api/friends/${params.id}/matches?from=${FROM_2026}&take=${nextTake}`, {
+      fetch(`/api/friends/${params.id}/matches?from=${BACKFILL_FROM}&take=${nextTake}`, {
         cache: "no-store",
       }).then((r) => r.json()),
       fetch(`/api/friends/${params.id}/summary`, { cache: "no-store" }).then((r) => r.json()),
@@ -155,36 +157,13 @@ export default function FriendPage({ params }: { params: { id: string } }) {
     [friend]
   );
 
-  const groupedByDay = useMemo(() => {
+  // Sorted (most recent first). We intentionally do NOT render a day header above the list.
+  const sortedMatches = useMemo(() => {
     const arr = Array.isArray(matches) ? matches : [];
-    const sorted = [...arr].sort((a, b) => {
+    return [...arr].sort((a, b) => {
       const aa = a.gameStartMs ? Number(a.gameStartMs) : 0;
       const bb = b.gameStartMs ? Number(b.gameStartMs) : 0;
       return bb - aa;
-    });
-
-    const groups = new Map<string, MatchRow[]>();
-    for (const m of sorted) {
-      const ms = m.gameStartMs ? Number(m.gameStartMs) : 0;
-      const d = ms ? new Date(ms) : null;
-      const key = d ? d.toISOString().slice(0, 10) : "unknown";
-      const bucket = groups.get(key) ?? [];
-      bucket.push(m);
-      groups.set(key, bucket);
-    }
-
-    const out = [...groups.entries()].sort((a, b) => b[0].localeCompare(a[0]));
-    return out.map(([key, items]) => {
-      const label =
-        key === "unknown"
-          ? "Date inconnue"
-          : new Date(`${key}T00:00:00Z`).toLocaleDateString(undefined, {
-              weekday: "short",
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-            });
-      return { key, label, items };
     });
   }, [matches]);
 
@@ -201,8 +180,8 @@ export default function FriendPage({ params }: { params: { id: string } }) {
 
   async function backfill2026() {
     setBusy(true);
-    pushToast("info", `Backfill depuis ${FROM_2026}… (ça peut prendre un peu)`);
-    const res = await fetch(`/api/friends/${params.id}/sync?from=${FROM_2026}&max=250`, {
+    pushToast("info", `Backfill ${BACKFILL_LABEL}… (ça peut prendre un peu)`);
+    const res = await fetch(`/api/friends/${params.id}/sync?from=${BACKFILL_FROM}&max=250`, {
       method: "POST",
     });
     const json = await res.json().catch(() => ({}));
@@ -313,7 +292,7 @@ export default function FriendPage({ params }: { params: { id: string } }) {
         </div>
       </header>
 
-      <div className="grid cols2" style={{ marginTop: 14 }}>
+      <div className="grid colsProfile" style={{ marginTop: 14 }}>
         <section className="card">
           <h2 className="cardTitle">Profil</h2>
 
@@ -384,7 +363,7 @@ export default function FriendPage({ params }: { params: { id: string } }) {
         <section className="card">
           <div className="row" style={{ justifyContent: "space-between" }}>
             <h2 className="cardTitle" style={{ marginBottom: 0 }}>
-              Games depuis {FROM_2026}
+              Games depuis {BACKFILL_LABEL}
             </h2>
             <div className="row" style={{ gap: 8 }}>
               <span className="badge">Affichées: {matches?.length ?? 0}</span>
@@ -402,18 +381,11 @@ export default function FriendPage({ params }: { params: { id: string } }) {
             </div>
           ) : matches.length === 0 ? (
             <p className="small">
-              Aucune game chargée en DB pour {FROM_2026}+ — clique “Backfill 2026”.
+              Aucune game chargée en DB pour {BACKFILL_LABEL} — clique “Backfill 2026”.
             </p>
           ) : (
             <div className="grid">
-              {groupedByDay.map((g) => (
-                <div key={g.key} className="grid" style={{ gap: 10 }}>
-                  <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-                    <div className="name" style={{ fontSize: 14 }}>{g.label}</div>
-                    <div className="sub">{g.items.length} game{g.items.length > 1 ? "s" : ""}</div>
-                  </div>
-
-                  {g.items.map((m) => {
+              {sortedMatches.map((m) => {
                     const opened = !!open[m.matchId];
                     const incomplete = (m.participantCount ?? 10) < 10;
 
@@ -558,8 +530,6 @@ export default function FriendPage({ params }: { params: { id: string } }) {
                       </div>
                     );
                   })}
-                </div>
-              ))}
             </div>
           )}
 

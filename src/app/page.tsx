@@ -263,8 +263,8 @@ export default function HomePage() {
         </div>
       </header>
 
-      <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
-        <section className="card" style={{ width: "min(900px, 100%)" }}>
+      {/* Keep the Monkeys card aligned with the top dashboard card width */}
+      <section className="card" style={{ marginTop: 14 }}>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <h2 className="cardTitle" style={{ marginBottom: 0 }}>
               Monkeys
@@ -361,8 +361,7 @@ export default function HomePage() {
               })}
             </div>
           )}
-        </section>
-      </div>
+      </section>
     </main>
   );
 }

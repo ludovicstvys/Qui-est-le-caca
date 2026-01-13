@@ -14,6 +14,8 @@ export type RunSyncOptions = {
   count?: number;
   /** If set, sync only this friend. */
   friendId?: string;
+  /** Internal override: per-run time budget in ms (useful for cron loops). */
+  timeBudgetMs?: number;
 };
 
 export type FriendSyncResult = {
@@ -297,7 +299,7 @@ export async function runSync(options: RunSyncOptions = {}) {
   const prisma = getPrisma();
 
   const startedAt = Date.now();
-  const budgetMs = clampInt(process.env.SYNC_TIME_BUDGET_MS, 240_000, 30_000, 290_000);
+  const budgetMs = clampInt(options.timeBudgetMs ?? process.env.SYNC_TIME_BUDGET_MS, 240_000, 10_000, 290_000);
   const timeBudget = { startedAt, budgetMs };
 
   const fromSeconds = parseFromDateToSeconds(options.from ?? null);

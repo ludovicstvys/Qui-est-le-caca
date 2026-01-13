@@ -36,7 +36,11 @@ code{color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);padding:.1rem .
 .p{margin:6px 0 0;color:var(--muted);font-size:14px}
 .grid{display:grid;gap:14px}
 /* Equal split on desktop for cleaner layout */
-@media(min-width:900px){.grid.cols2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+@media(min-width:900px){
+  .grid.cols2{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  /* Friend page: make profile narrower, games wider */
+  .grid.colsProfile{grid-template-columns:420px minmax(0,1fr)}
+}
 .card{
   border:1px solid var(--border);border-radius:var(--radius);
   background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
